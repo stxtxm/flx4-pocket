@@ -173,12 +173,23 @@
             android:layout_weight="1"
             android:contentDescription="Tempo" />
 
+        <!-- An arrow here: move the FLX4 tempo fader that way until it takes over. -->
         <TextView
             android:id="@+id/deck_pitch"
             android:layout_width="match_parent"
             android:layout_height="18dp"
             android:gravity="center"
             android:textColor="@color/text_dim"
+            android:textSize="9sp" />
+
+        <TextView
+            android:id="@+id/deck_key"
+            style="@style/Btn"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:layout_weight="0"
+            android:contentDescription="Keylock: the tempo changes, not the pitch"
+            android:text="KEY"
             android:textSize="9sp" />
     </LinearLayout>
 </merge>

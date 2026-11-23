@@ -7,6 +7,10 @@ package io.github.timotheegrollier.flx4pocket
  * the mixer reads a fractional cursor. Keeping absolute frame numbers makes
  * seeks and loop wraps deterministic: if the requested audio is no longer in
  * the window, [sample] returns false and the deck can ask the decoder to seek.
+ *
+ * Storage is circular (frame `f` lives at `f mod capacity`), so evicting old
+ * audio moves nothing: a full ring used to shift its whole window on every
+ * decoder write while the mixer waited on the lock.
  */
 class PcmRing(
     val sampleRate: Int,
@@ -46,6 +50,8 @@ class PcmRing(
         return relative >= 0.0 && relative + 1.0 < availableFrames
     }
 
+    private fun slot(frame: Long): Int = Math.floorMod(frame, capacityFrames.toLong()).toInt() * channels
+
     /**
      * Writes [frames] interleaved stereo frames starting at [startFrame].
      *
@@ -56,62 +62,25 @@ class PcmRing(
     @Synchronized
     fun write(startFrame: Long, source: FloatArray, frames: Int) {
         if (frames <= 0 || source.size < frames * channels) return
-        var start = startFrame
-        var count = frames
-        var sourceFrame = 0
-
-        if (start < baseFrame) {
-            val skip = (baseFrame - start).toInt()
-            if (skip >= count) return
-            sourceFrame += skip
-            count -= skip
-            start += skip
+        val end = startFrame + frames
+        if (end - baseFrame > capacityFrames) {
+            val newBase = end - capacityFrames
+            availableFrames = (baseFrame + availableFrames - newBase).coerceIn(0L, capacityFrames.toLong()).toInt()
+            baseFrame = newBase
         }
-
-        val endFrame = start + count
-        if (endFrame > baseFrame + capacityFrames) {
-            val drop = (endFrame - (baseFrame + capacityFrames)).toInt()
-            if (drop >= availableFrames) {
-                baseFrame = endFrame - capacityFrames
-                availableFrames = 0
-            } else {
-                System.arraycopy(
-                    data,
-                    drop * channels,
-                    data,
-                    0,
-                    (availableFrames - drop) * channels
-                )
-                baseFrame += drop
-                availableFrames -= drop
-            }
+        val first = maxOf(startFrame, baseFrame)
+        if (first >= end) return
+        var frame = baseFrame + availableFrames
+        while (frame < first) {
+            val at = slot(frame++)
+            for (c in 0 until channels) data[at + c] = 0f
         }
-
-        val relativeStart = (start - baseFrame).toInt()
-        val gap = relativeStart - availableFrames
-        if (gap > 0) {
-            val zeroCount = minOf(gap, capacityFrames - availableFrames)
-            java.util.Arrays.fill(
-                data,
-                availableFrames * channels,
-                (availableFrames + zeroCount) * channels,
-                0f
-            )
-            availableFrames += zeroCount
+        for (f in first until end) {
+            val at = slot(f)
+            val from = (f - startFrame).toInt() * channels
+            for (c in 0 until channels) data[at + c] = source[from + c]
         }
-
-        val destinationFrame = (start - baseFrame).toInt()
-        val writable = minOf(count, capacityFrames - destinationFrame)
-        if (writable <= 0) return
-
-        for (f in 0 until writable) {
-            val destination = (destinationFrame + f) * channels
-            val sourceIndex = (sourceFrame + f) * channels
-            for (c in 0 until channels) {
-                data[destination + c] = source[sourceIndex + c]
-            }
-        }
-        availableFrames = maxOf(availableFrames, destinationFrame + writable)
+        availableFrames = maxOf(availableFrames, (end - baseFrame).toInt())
     }
 
     /**
@@ -124,12 +93,24 @@ class PcmRing(
         lastRead = frame
         val relative = frame - baseFrame
         if (relative < 0.0 || relative + 1.0 >= availableFrames) return false
-        val index = relative.toInt()
-        val fraction = (relative - index).toFloat()
-        val i0 = index * channels
-        val i1 = (index + 1) * channels
-        out[0] = data[i0] + (data[i1] - data[i0]) * fraction
-        out[1] = data[i0 + 1] + (data[i1 + 1] - data[i0 + 1]) * fraction
+        val index = relative.toLong()
+        val t = (relative - index).toFloat()
+        val at = baseFrame + index
+        // Four-point cubic: linear interpolation dulls the highs whenever the
+        // tempo is off 0 % or the file is not 44.1 kHz. Edges reuse the end frame.
+        val before = slot(if (index > 0) at - 1 else at)
+        val s0 = slot(at)
+        val s1 = slot(at + 1)
+        val after = slot(if (index + 2 < availableFrames) at + 2 else at + 1)
+        for (c in 0..1) out[c] = cubic(data[before + c], data[s0 + c], data[s1 + c], data[after + c], t)
         return true
     }
+}
+
+/** Catmull-Rom between [x0] and [x1] at [t] (0..1); exact on the samples themselves. */
+internal fun cubic(xm1: Float, x0: Float, x1: Float, x2: Float, t: Float): Float {
+    val c1 = 0.5f * (x1 - xm1)
+    val c2 = xm1 - 2.5f * x0 + 2f * x1 - 0.5f * x2
+    val c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1)
+    return ((c3 * t + c2) * t + c1) * t + x0
 }

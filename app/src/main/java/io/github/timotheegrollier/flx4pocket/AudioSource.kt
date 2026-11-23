@@ -5,6 +5,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.Process
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToLong
 
@@ -23,14 +24,18 @@ interface PcmSource {
 }
 
 /**
- * Streams a local audio file into a [PcmRing].
+ * Streams a local audio file into a [PcmRing], and decodes the whole of it
+ * into a [TrackBuffer] in the background.
  *
- * MediaCodec decoding runs on its own thread and stays a few seconds ahead of
- * the mixer's read position. The mixer never touches the extractor or codec:
- * it only reads the ring, so seeks and loop wraps cannot block audio output.
+ * The streaming decoder runs on its own thread and stays a few seconds ahead
+ * of the mixer's read position, so playback starts at once. A second decoder
+ * fills the track buffer from the start at full speed; reads prefer it, so
+ * once it is done every jump is instant and the streaming decoder stops. The
+ * mixer never touches an extractor or codec, so nothing can block the output.
  */
-class AudioSource(context: Context, uri: Uri) : PcmSource {
+class AudioSource(context: Context, private val uri: Uri) : PcmSource {
 
+    private val appContext = context.applicationContext
     private val extractor = MediaExtractor()
     private val format: MediaFormat
     private val layout: PcmDecoder.Layout
@@ -51,8 +56,12 @@ class AudioSource(context: Context, uri: Uri) : PcmSource {
     private val seekRequestUs = AtomicLong(NO_SEEK)
 
     @Volatile
+    private var track: TrackBuffer? = null
+
+    @Volatile
     private var running = true
     private var thread: Thread? = null
+    private var filler: Thread? = null
     private var stereo = FloatArray(0)
 
     init {
@@ -72,15 +81,20 @@ class AudioSource(context: Context, uri: Uri) : PcmSource {
     fun start() {
         if (thread != null || !running) return
         thread = Thread(::decodeLoop, "flx4-decode").apply { start() }
+        filler = Thread(::fillLoop, "flx4-fill").apply { start() }
     }
 
     override fun seek(seconds: Double) {
         seekRequestUs.set((seconds.coerceAtLeast(0.0) * 1_000_000.0).toLong())
     }
 
-    override fun sampleFrame(frame: Double, out: FloatArray): Boolean = ring.sample(frame, out)
+    /** The whole-track buffer, when it holds this frame at the rate the deck reads. */
+    private fun full(frame: Double): TrackBuffer? = track?.takeIf { it.sampleRate == sampleRate && it.has(frame) }
 
-    override fun hasFrame(frame: Double): Boolean = ring.hasFrame(frame)
+    override fun sampleFrame(frame: Double, out: FloatArray): Boolean =
+        full(frame)?.sample(frame, out) ?: ring.sample(frame, out)
+
+    override fun hasFrame(frame: Double): Boolean = full(frame) != null || ring.hasFrame(frame)
 
     override fun close() {
         running = false
@@ -91,9 +105,27 @@ class AudioSource(context: Context, uri: Uri) : PcmSource {
         }
         try {
             worker.join(800)
+            filler?.join(800)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+    }
+
+    private fun fillLoop() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+        // shortcut: files over 15 min (DJ mixes) only stream, so far jumps there can still gap; raise the cap if memory allows.
+        if (durationSec <= 0.0 || durationSec > MAX_BUFFER_SECONDS) return
+        var fits = true
+        val reachedEnd = PcmDecoder.decode(appContext, uri) { stereo, frames, rate, _ ->
+            val buffer = track ?: try {
+                TrackBuffer(rate, ((durationSec + 1.0) * rate).toInt()).also { track = it }
+            } catch (_: OutOfMemoryError) {
+                return@decode false // keep streaming only
+            }
+            fits = buffer.append(stereo, frames)
+            running && fits
+        }
+        if (reachedEnd && fits && running) track?.complete = true
     }
 
     private fun decodeLoop() {
@@ -108,6 +140,7 @@ class AudioSource(context: Context, uri: Uri) : PcmSource {
             var nextPtsUs = 0L
 
             while (running) {
+                if (track?.complete == true) break // the whole track is in memory now
                 val seekUs = seekRequestUs.getAndSet(NO_SEEK)
                 if (seekUs != NO_SEEK) {
                     // PREVIOUS_SYNC: decoding starts at or before the target, and
@@ -167,5 +200,8 @@ class AudioSource(context: Context, uri: Uri) : PcmSource {
         /** Audio kept in memory per deck; what is behind the playhead serves loops and scratching. */
         private const val RING_SECONDS = 24
         private const val AHEAD_SECONDS = 6
+
+        /** Longest track decoded whole: 15 min is about 160 MB. */
+        private const val MAX_BUFFER_SECONDS = 15 * 60
     }
 }

@@ -79,11 +79,16 @@
                 layout="@layout/view_wave" />
         </LinearLayout>
 
-        <!-- Deck A | mixer | Deck B -->
-        <LinearLayout
+        <!-- Deck A | mixer | Deck B; the library opens over this part only, so
+             both waveforms and their remaining time stay in sight while browsing. -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:orientation="horizontal"
             android:padding="2dp">
 
@@ -205,9 +210,8 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1" />
         </LinearLayout>
-    </LinearLayout>
 
-    <!-- Library, shown on top of the decks -->
+    <!-- Library -->
     <LinearLayout
         android:id="@+id/library_panel"
         android:layout_width="match_parent"
@@ -223,13 +227,20 @@
             android:layout_height="44dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="10dp"
+            android:paddingStart="4dp"
             android:paddingEnd="4dp">
+
+            <!-- Shown when the library was opened from a deck: a tap on a track loads it there. -->
+            <TextView
+                android:id="@+id/library_target"
+                style="@style/Btn.Wrap"
+                android:visibility="gone" />
 
             <EditText
                 android:id="@+id/library_search"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
+                android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:background="@null"
                 android:hint="Search tracks"
@@ -267,5 +278,7 @@
             android:layout_weight="1"
             android:divider="@color/line"
             android:dividerHeight="1dp" />
+    </LinearLayout>
+        </FrameLayout>
     </LinearLayout>
 </FrameLayout>

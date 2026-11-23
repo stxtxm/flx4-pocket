@@ -26,6 +26,9 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         fun onMaster(deck: Int)
         fun onTap(deck: Int)
         fun onHotCuesChanged(deck: Int)
+
+        /** The empty deck was tapped. */
+        fun onLoadRequest(deck: Int)
     }
 
     private lateinit var deck: Deck
@@ -55,6 +58,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
     private val range: TextView
     private val tempo: FaderView
     private val pitch: TextView
+    private val key: TextView
 
     // Waveform header and channel strip, attached in bind().
     private lateinit var title: TextView
@@ -90,6 +94,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         range = findViewById(R.id.deck_range)
         tempo = findViewById(R.id.deck_tempo)
         pitch = findViewById(R.id.deck_pitch)
+        key = findViewById(R.id.deck_key)
     }
 
     fun bind(deck: Deck, accentColor: Int, header: View, strip: View, host: Host, onZoom: (Double) -> Unit) {
@@ -98,11 +103,14 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         accent = accentColor
         val index = deck.index
 
+        val loadIfEmpty = View.OnClickListener { if (!deck.hasTrack()) host.onLoadRequest(index) }
         header.findViewById<WaveformView>(R.id.wave).let {
             it.deck = deck
             it.accent = accentColor
             it.onZoom = onZoom
+            it.setOnClickListener(loadIfEmpty)
         }
+        overview.setOnClickListener(loadIfEmpty)
         header.findViewById<TextView>(R.id.wave_deck).let {
             it.text = if (index == 0) "A" else "B"
             it.tint(accentColor, onAccent)
@@ -137,6 +145,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         tempo.centered = true
         tempo.onChange = { deck.setTempoNormalized((0.5 - it) * 2.0) }
         range.setOnClickListener { deck.cycleTempoRange() }
+        key.setOnClickListener { deck.keyLock = !deck.keyLock }
 
         TAB_MODES.forEachIndexed { i, mode ->
             tabs[i].text = TAB_LABELS[i]
@@ -222,14 +231,17 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         vu.setLevel(level)
     }
 
-    /** Called a few times per second: texts and button states. */
-    fun refresh(isMaster: Boolean) {
+    /**
+     * Called a few times per second: texts and button states. [takeover] is the
+     * way the FLX4 tempo fader must move to take over (-1 up, +1 down), or 0.
+     */
+    fun refresh(isMaster: Boolean, takeover: Int = 0) {
         val hasTrack = deck.hasTrack()
         val text = message
         title.show(
             when {
                 text != null -> text
-                !hasTrack -> "Open LIBRARY to load a track"
+                !hasTrack -> "Tap here to load a track"
                 deck.artist.isBlank() -> deck.title
                 else -> "${deck.title}  ·  ${deck.artist}"
             }
@@ -253,8 +265,15 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
             }
         )
         time.show(if (hasTrack) "-" + formatTime(deck.durationSec - deck.positionSec) else "--:--")
-        pitch.show(String.format(Locale.US, "%+.1f%%", (deck.tempoRate * deck.syncFactor - 1.0) * 100.0))
+        val arrow = when (takeover) {
+            -1 -> "▲"
+            1 -> "▼"
+            else -> ""
+        }
+        pitch.show(arrow + String.format(Locale.US, "%+.1f%%", (deck.tempoRate * deck.syncFactor - 1.0) * 100.0))
+        pitch.setTextColor(if (takeover == 0) textDim else fxColor)
         range.show(if (deck.tempoRange >= 0.5) "WIDE" else "±${(deck.tempoRange * 100).toInt()}%")
+        style(key, deck.keyLock)
 
         play.show(if (deck.playing) "❚❚" else "▶")
         style(play, deck.playing)

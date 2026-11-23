@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FLX4 Pocket</string>
-    <string name="play_no_track">Load a track first (open LIBRARY)</string>
     <string name="status_no_controller">No controller</string>
     <string name="status_phone_output">phone output</string>
     <string name="back_again">Music is playing — press back again to quit</string>
     <string name="not_supported">%1$s is not supported yet</string>
+    <string name="playback_channel">Playback</string>
+    <string name="playback_running">The decks keep playing with the screen off</string>
 
     <!-- In-app updates -->
     <string name="update_checking">CHECKING…</string>

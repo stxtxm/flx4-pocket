@@ -45,6 +45,10 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
     var visibleSeconds = 8.0
     var onZoom: ((Double) -> Unit)? = null
 
+    /** False while the library is open over the decks: a resting finger must not hold a playing track. */
+    var scratchable = true
+    private var grabbed = false
+
     private val density = resources.displayMetrics.density
     private val barWidth = max(2f, 1.2f * density)
     private val bandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = barWidth + 0.5f }
@@ -240,6 +244,10 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val d = deck ?: return false
+        // Decided when the finger lands, for the whole gesture: an empty deck, or any
+        // deck while the library is open, only takes taps (which load an empty deck).
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) grabbed = d.hasTrack() && scratchable
+        if (!grabbed) return super.onTouchEvent(event)
         pinch.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -355,7 +363,7 @@ class OverviewView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val d = deck ?: return false
-        if (width <= 0 || d.durationSec <= 0.0) return false
+        if (width <= 0 || d.durationSec <= 0.0) return super.onTouchEvent(event) // empty deck: a tap loads one
         if (event.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
         if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
             d.seekTo((event.x / width).coerceIn(0f, 1f) * d.durationSec)

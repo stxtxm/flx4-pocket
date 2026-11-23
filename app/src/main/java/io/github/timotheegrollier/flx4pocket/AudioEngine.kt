@@ -206,6 +206,9 @@ class AudioEngine(context: Context) {
         val output = FloatArray(BLOCK * channels)
         val deckA = decks[0]
         val deckB = decks[1]
+        val limiter = Limiter(SAMPLE_RATE)
+        var lastGainA = 0f
+        var lastGainB = 0f
 
         while (running) {
             deckA.render(BLOCK, aL, aR, if (deckA.syncEnabled && masterDeckIndex == 1) deckB else null)
@@ -214,6 +217,9 @@ class AudioEngine(context: Context) {
             val cross = crossfader
             val gainA = MixerMath.faderGain(deckA.volume) * MixerMath.crossGain(cross, 0)
             val gainB = MixerMath.faderGain(deckB.volume) * MixerMath.crossGain(cross, 1)
+            // Faders glide across the block: a gain stepping every 5.8 ms buzzes and clicks on cuts.
+            val stepA = (gainA - lastGainA) / BLOCK
+            val stepB = (gainB - lastGainB) / BLOCK
             val pflA = if (deckA.cueEnabled) 1f else 0f
             val pflB = if (deckB.cueEnabled) 1f else 0f
             var peakA = 0f
@@ -222,13 +228,17 @@ class AudioEngine(context: Context) {
                 // The cue bus is tapped before the faders, like a hardware mixer.
                 cueL[i] = aL[i] * pflA + bL[i] * pflB
                 cueR[i] = aR[i] * pflA + bR[i] * pflB
-                aL[i] *= gainA
-                aR[i] *= gainA
-                bL[i] *= gainB
-                bR[i] *= gainB
+                val gA = lastGainA + stepA * (i + 1)
+                val gB = lastGainB + stepB * (i + 1)
+                aL[i] *= gA
+                aR[i] *= gA
+                bL[i] *= gB
+                bR[i] *= gB
                 peakA = max(peakA, abs(aL[i]))
                 peakB = max(peakB, abs(bL[i]))
             }
+            lastGainA = gainA
+            lastGainB = gainB
             levels[0] = max(peakA, levels[0] * 0.9f)
             levels[1] = max(peakB, levels[1] * 0.9f)
 
@@ -253,8 +263,11 @@ class AudioEngine(context: Context) {
             var peakL = 0f
             var peakR = 0f
             for (i in 0 until BLOCK) {
-                val left = MixerMath.softClip(aL[i] * master)
-                val right = MixerMath.softClip(aR[i] * master)
+                val l = aL[i] * master
+                val r = aR[i] * master
+                val g = limiter.gainFor(max(abs(l), abs(r)))
+                val left = l * g
+                val right = r * g
                 peakL = max(peakL, abs(left))
                 peakR = max(peakR, abs(right))
                 val o = i * channels

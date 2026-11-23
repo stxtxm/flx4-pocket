@@ -272,6 +272,84 @@ class DeckTest {
     }
 
     @Test
+    fun `a synced deck follows the master's tempo changes`() {
+        val master = Deck(1)
+        master.load(FakeSource(), "M", "", 0.0)
+        master.setGrid(120.0, 0.0, 2.0)
+        master.togglePlay()
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        master.setTempoNormalized(0.5) // the master speeds up by 5 %
+        repeat(20) {
+            master.render(256, l, r, null)
+            deck.render(256, l, r, master)
+        }
+        assertEquals(126.0, deck.effectiveBpm(), 0.01)
+        assertEquals("a fader takes over at the synced speed", 0.5, deck.tempoPosition, 1e-6)
+    }
+
+    /** A 0.5 amplitude sine, always decoded. */
+    private class SineSource(private val hz: Double) : PcmSource {
+        override val sampleRate = 44100
+        override val durationSec = 30.0
+        override fun sampleFrame(frame: Double, out: FloatArray): Boolean {
+            if (frame < 0 || frame > durationSec * sampleRate) return false
+            val v = (0.5 * Math.sin(2 * Math.PI * hz * frame / sampleRate)).toFloat()
+            out[0] = v
+            out[1] = v
+            return true
+        }
+
+        override fun hasFrame(frame: Double) = true
+        override fun seek(seconds: Double) {}
+        override fun close() {}
+    }
+
+    /** Pitch heard over [blocks] blocks, from rising zero crossings. */
+    private fun heardHz(blocks: Int): Double {
+        var crossings = 0
+        var previous = 0f
+        repeat(blocks) {
+            deck.render(256, l, r, null)
+            for (x in l) {
+                if (previous < 0f && x >= 0f) crossings++
+                previous = x
+            }
+        }
+        return crossings / (blocks * 256.0 / Deck.SAMPLE_RATE)
+    }
+
+    @Test
+    fun `keylock changes the tempo but not the pitch`() {
+        deck.load(SineSource(441.0), "Sine", "", 0.0)
+        deck.togglePlay()
+        deck.setTempoNormalized(0.8) // +8 %
+        assertEquals("vinyl: the pitch follows the tempo", 476.3, heardHz(172), 4.0)
+
+        deck.keyLock = true
+        heardHz(20) // first grains
+        val before = deck.positionSec
+        assertEquals("keylock: the pitch stays", 441.0, heardHz(172), 4.0)
+        assertEquals("and the tempo is still +8 %", 1.08, (deck.positionSec - before) / (172 * 256.0 / 44100), 0.002)
+    }
+
+    @Test
+    fun `a jump crossfades instead of clicking`() {
+        deck.load(SineSource(441.0), "Sine", "", 0.0)
+        deck.togglePlay()
+        deck.render(256, l, r, null)
+        var previous = l[255]
+        deck.seekTo(10.0 + 0.25 / 441) // where the sine is at its peak: a cut would step by ~0.7
+        deck.render(256, l, r, null)
+        var worst = 0f
+        for (x in l) {
+            worst = maxOf(worst, abs(x - previous))
+            previous = x
+        }
+        assertTrue("largest step $worst", worst < 0.05f)
+    }
+
+    @Test
     fun `sync is refused without a grid`() {
         val master = Deck(1)
         master.load(FakeSource(), "M", "", 0.0)

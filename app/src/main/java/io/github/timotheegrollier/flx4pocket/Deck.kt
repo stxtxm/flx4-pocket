@@ -2,8 +2,10 @@ package io.github.timotheegrollier.flx4pocket
 
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToLong
+import kotlin.math.sqrt
 
 /**
  * One deck of the mixer: transport, tempo, sync, loops, cues, scratching, EQ,
@@ -85,6 +87,10 @@ class Deck(val index: Int) {
     @Volatile
     var quantize: Boolean = true
 
+    /** Keylock (master tempo): the tempo fader, sync and nudges change the speed, not the pitch. */
+    @Volatile
+    var keyLock: Boolean = false
+
     /** Pitch bend held from the touch UI, as a fraction of speed (e.g. 0.04). */
     @Volatile
     var nudge: Double = 0.0
@@ -121,7 +127,6 @@ class Deck(val index: Int) {
     // State below is only touched while holding the deck lock.
     private var cursor = 0.0 // source frames
     private var tempoNormalized = 0.0
-    private var syncBaseFactor = 1.0
     private var jogBend = 0.0
     private var scratchPending = 0.0 // source frames still to travel
     private var rolling = false
@@ -131,6 +136,18 @@ class Deck(val index: Int) {
     private var cuePreview = false
     private var misses = 0
     private val sample = FloatArray(2)
+
+    // Keylock grains (WSOLA) and click-free jumps, in source frames.
+    private var stretching = false // the last block played grains
+    private var grainPos = 0.0 // next frame of the grain playing now
+    private var grainLeft = 0 // output frames before the next grain starts
+    private var tailPos = 0.0 // next frame of the audio fading out (old grain, or before a jump)
+    private var tailLeft = 0
+    private var tailLength = 1
+    private var foldStart = 0.0 // the loop or roll a read wraps around
+    private var foldLength = 0.0
+    private val reference = FloatArray(GRAIN_OVERLAP)
+    private val candidates = FloatArray(2 * GRAIN_SEEK + GRAIN_OVERLAP)
 
     private val lowL = Biquad()
     private val lowR = Biquad()
@@ -287,7 +304,11 @@ class Deck(val index: Int) {
         releaseSyncInternal()
     }
 
-    val tempoPosition: Double get() = if (tempoRange > 0.0) (tempoRate - 1.0) / tempoRange else 0.0
+    /**
+     * Where a tempo fader (-1..1) must sit to give the speed the deck plays at
+     * now, sync included: the point where a fader can take over without a jump.
+     */
+    val tempoPosition: Double get() = if (tempoRange > 0.0) (tempoRate * syncFactor - 1.0) / tempoRange else 0.0
 
     @Synchronized
     fun cycleTempoRange() {
@@ -366,7 +387,6 @@ class Deck(val index: Int) {
         val baseBpm = grid.bpm * tempoRate
         if (targetBpm <= 0.0 || baseBpm <= 0.0) return false
         syncFactor = (targetBpm / baseBpm).coerceIn(0.5, 2.0)
-        syncBaseFactor = syncFactor
         syncEnabled = true
         if (master.playing) {
             val errorBeats = BeatGrid.phaseError(master.phase(), phase())
@@ -381,7 +401,6 @@ class Deck(val index: Int) {
     private fun releaseSyncInternal() {
         syncEnabled = false
         syncFactor = 1.0
-        syncBaseFactor = 1.0
     }
 
     // ------------------------------------------------------------------
@@ -554,6 +573,8 @@ class Deck(val index: Int) {
             java.util.Arrays.fill(outR, 0, frames, 0f)
             speed = 0.0
             jogBend = 0.0
+            stretching = false
+            tailLeft = 0
             renderFx(outL, outR, frames) // let echo and reverb tails ring out
             return
         }
@@ -561,9 +582,11 @@ class Deck(val index: Int) {
         val rate = src.sampleRate.toDouble()
         val ratio = rate / SAMPLE_RATE
         val playStep = if (playing) {
-            val sync = if (syncEnabled && syncMaster != null && syncMaster.grid.valid && syncMaster.playing) {
+            val sync = if (syncEnabled && grid.valid && syncMaster != null && syncMaster.grid.valid && syncMaster.playing) {
+                // Follow the master's tempo as it moves, and pull the beats together.
+                syncFactor = (syncMaster.effectiveBpm() / (grid.bpm * tempoRate)).coerceIn(0.5, 2.0)
                 val error = BeatGrid.phaseError(syncMaster.phase(), phase())
-                syncBaseFactor * (1.0 + (error * 0.05).coerceIn(-0.004, 0.004))
+                syncFactor * (1.0 + (error * 0.05).coerceIn(-0.004, 0.004))
             } else {
                 syncFactor
             }
@@ -586,6 +609,20 @@ class Deck(val index: Int) {
         val wrapStart = if (rolling) rollStart else loopInSec * rate
         val wrapLength = if (rolling) rollLength else (loopOutSec - loopInSec) * rate
         val durationFrames = durationSec * rate
+        foldStart = wrapStart
+        foldLength = if (wrap) wrapLength else 0.0
+
+        // Keylock: grains read at the track's own pitch while the playhead moves at `step`.
+        val stretch = keyLock && playing && !scratching
+        if (stretch != stretching) {
+            if (stretch) {
+                grainPos = cursor
+                grainLeft = GRAIN_HOP
+            } else {
+                startTail(grainPos, GRAIN_OVERLAP) // back to reading at the playhead, without a click
+            }
+            stretching = stretch
+        }
 
         updateFilters()
         val gain = MixerMath.trimGain(trim)
@@ -595,7 +632,8 @@ class Deck(val index: Int) {
                 cursor = wrapStart + (cursor - wrapStart) % wrapLength
                 if (!src.hasFrame(cursor)) src.seek(cursor / rate)
             }
-            if (!src.sampleFrame(cursor, sample)) {
+            if (stretching && grainLeft <= 0) startGrain(src, ratio)
+            if (!src.sampleFrame(if (stretching) fold(grainPos) else cursor, sample)) {
                 // Not decoded yet: output silence and hold the position.
                 outL[i] = 0f
                 outR[i] = 0f
@@ -611,9 +649,20 @@ class Deck(val index: Int) {
                 continue
             }
             misses = 0
+            var l = sample[0].toDouble()
+            var r = sample[1].toDouble()
+            if (tailLeft > 0) {
+                // Crossfade from the audio fading out: the previous grain, or where a jump left.
+                val w = tailLeft.toDouble() / tailLength
+                val heard = src.sampleFrame(fold(tailPos), sample)
+                l = l * (1.0 - w) + if (heard) sample[0] * w else 0.0
+                r = r * (1.0 - w) + if (heard) sample[1] * w else 0.0
+                tailPos += ratio
+                tailLeft--
+            }
 
-            var left = highL.process(midL.process(lowL.process(sample[0].toDouble())))
-            var right = highR.process(midR.process(lowR.process(sample[1].toDouble())))
+            var left = highL.process(midL.process(lowL.process(l)))
+            var right = highR.process(midR.process(lowR.process(r)))
             if (!filterBypass) {
                 left = filterL.process(left)
                 right = filterR.process(right)
@@ -622,6 +671,10 @@ class Deck(val index: Int) {
             outR[i] = (right * gain).toFloat()
             i++
 
+            if (stretching) {
+                grainPos += ratio
+                grainLeft--
+            }
             cursor += step
             if (rolling) slipCursor += playStep
             if (cursor < 0.0) cursor = 0.0
@@ -653,11 +706,68 @@ class Deck(val index: Int) {
     private fun seekToInternal(seconds: Double) {
         val src = source ?: return
         val clamped = seconds.coerceIn(0.0, max(0.0, durationSec))
+        if (playing || scratching) {
+            // Fade the old position out over a few ms rather than cutting it. A grain
+            // already fading out finishes first, then the next grain starts at the target.
+            if (stretching) grainLeft = min(grainLeft, tailLeft) else startTail(cursor, JUMP_FADE)
+        }
         cursor = clamped * src.sampleRate
         positionSec = clamped
         misses = 0
         if (!src.hasFrame(cursor)) src.seek(clamped)
     }
+
+    private fun startTail(position: Double, length: Int) {
+        tailPos = position
+        tailLeft = length
+        tailLength = length
+    }
+
+    /** Reads that run past the end of the active loop or roll continue from its start. */
+    private fun fold(position: Double): Double =
+        if (foldLength > 1.0 && position >= foldStart + foldLength) foldStart + (position - foldStart) % foldLength else position
+
+    /**
+     * Keylock (WSOLA): the grain that played so far fades out while the next one
+     * starts at the playhead, shifted to where its waveform best continues the old one.
+     */
+    private fun startGrain(src: PcmSource, ratio: Double) {
+        startTail(grainPos, GRAIN_OVERLAP)
+        for (j in reference.indices) reference[j] = mono(src, tailPos + j * ratio)
+        for (k in candidates.indices) candidates[k] = mono(src, cursor + (k - GRAIN_SEEK) * ratio)
+        var best = 0
+        var bestScore = match(0)
+        for (pass in 0..1) { // every 8th offset, then the ones around the best
+            val from = if (pass == 0) -GRAIN_SEEK else max(-GRAIN_SEEK, best - 7)
+            val to = if (pass == 0) GRAIN_SEEK else min(GRAIN_SEEK, best + 7)
+            val stride = if (pass == 0) 8 else 1
+            for (offset in from..to step stride) {
+                val score = match(offset)
+                if (score > bestScore) {
+                    bestScore = score
+                    best = offset
+                }
+            }
+        }
+        grainPos = cursor + best * ratio
+        grainLeft = GRAIN_HOP
+    }
+
+    /** How well the candidate grain starting [offset] frames from the playhead continues the old one. */
+    private fun match(offset: Int): Float {
+        val start = offset + GRAIN_SEEK
+        var dot = 0f
+        var energy = 1e-9f
+        for (j in reference.indices) {
+            val c = candidates[start + j]
+            dot += reference[j] * c
+            energy += c * c
+        }
+        return dot / sqrt(energy)
+    }
+
+    private fun mono(src: PcmSource, position: Double): Float =
+        if (src.sampleFrame(fold(position), sample)) (sample[0] + sample[1]) * 0.5f else 0f
 
     private fun resetFilters() {
         lowL.reset(); lowR.reset()
@@ -756,5 +866,14 @@ class Deck(val index: Int) {
         const val JOG_TICK_SECONDS = 1.8 / 720.0
         private const val MIN_LOOP_SECONDS = 0.02
         private const val FILTER_DEAD_ZONE = 0.02f
+
+        // Keylock grains, in 44.1 kHz frames: a new grain every 70 ms, crossfaded over
+        // 12 ms, placed up to 12 ms either side of the playhead (SoundTouch's music settings).
+        private const val GRAIN_HOP = 3072
+        private const val GRAIN_OVERLAP = 512
+        private const val GRAIN_SEEK = 512
+
+        /** Crossfade on a jump (hot cue, loop, seek): 3 ms, enough to avoid a click. */
+        private const val JUMP_FADE = 128
     }
 }

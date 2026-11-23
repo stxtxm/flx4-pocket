@@ -84,8 +84,15 @@ different key under the same application id.
 
 ## 5. Audio quality and timing
 
-- Tempo changes are implemented by resampling. There is no keylock yet, so
-  moving the pitch fader changes pitch as well as speed.
+- Without KEY, tempo changes are a resampling read: pitch follows speed, like
+  vinyl. With KEY the deck time-stretches (WSOLA): clean within the usual
+  ±10 %, with audible grain artifacts at large changes. Scratching is always
+  vinyl.
+- Playback goes on with the screen off or another app in front through a
+  foreground service started while the app is in front (Android refuses it
+  from the background). On Android 13+ its notification only shows if
+  notifications are allowed for the app; the service runs either way. It stops
+  after ten minutes without playback.
 - Beat sync locks to the analysed grid and corrects drift by up to 0.4%; BPM
   analysis can be wrong on rubato, live drums or very sparse intros. Use TAP or
   the tempo fader when the grid is wrong.

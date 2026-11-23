@@ -2,6 +2,7 @@ package io.github.timotheegrollier.flx4pocket
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.net.Uri
 import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
@@ -178,6 +179,46 @@ class MainActivityTest {
     }
 
     @Test
+    fun `tapping an empty deck opens the library for that deck`() {
+        val activity = launch().get()
+        val library = activity.findViewById<View>(R.id.library_panel)
+        val target = activity.findViewById<TextView>(R.id.library_target)
+        activity.onBackPressed() // closes the first-run library
+        assertEquals(View.GONE, library.visibility)
+
+        val wave = activity.findViewById<View>(R.id.wave_b).findViewById<View>(R.id.wave)
+        tap(wave, MotionEvent.ACTION_DOWN)
+        assertTrue("an empty deck takes a touch as a tap, not a scratch", wave.isPressed)
+        tap(wave, MotionEvent.ACTION_UP)
+        wave.performClick() // the click a real tap posts needs a window, which these tests never attach
+        assertEquals(View.VISIBLE, library.visibility)
+        assertEquals("LOAD TO B", target.text.toString())
+
+        activity.onBackPressed()
+        activity.onButton(0, Flx4Button.PLAY, true) // PLAY on an empty deck does the same
+        assertEquals("LOAD TO A", target.text.toString())
+        activity.onBackPressed()
+        assertEquals(View.GONE, target.visibility)
+
+        activity.onBrowse(1, shift = false) // the first browse click only opens the library
+        assertEquals(View.VISIBLE, library.visibility)
+        assertEquals(View.GONE, target.visibility)
+
+        // While browsing, a finger resting on a playing deck's waveform must not hold the track.
+        val deckA = activity.engine.decks[0]
+        loadDemoTrack(deckA, "Playing", "", bpm = 124.0, at = 10.0)
+        val waveA = activity.findViewById<View>(R.id.wave_a).findViewById<View>(R.id.wave)
+        tap(waveA, MotionEvent.ACTION_DOWN)
+        assertFalse(deckA.scratching)
+        tap(waveA, MotionEvent.ACTION_UP)
+        activity.onBackPressed()
+        tap(waveA, MotionEvent.ACTION_DOWN)
+        assertTrue(deckA.scratching)
+        tap(waveA, MotionEvent.ACTION_UP)
+        assertFalse(deckA.scratching)
+    }
+
+    @Test
     fun `transport buttons tolerate an empty deck`() {
         val activity = launch().get()
         val deck = activity.findViewById<View>(R.id.deck_a)
@@ -187,11 +228,41 @@ class MainActivityTest {
         }
         for (id in listOf(
             R.id.deck_play, R.id.deck_sync, R.id.deck_loop_in, R.id.deck_loop_out, R.id.deck_reloop,
-            R.id.deck_loop_half, R.id.deck_loop_double, R.id.deck_quantize, R.id.deck_tap, R.id.deck_range
+            R.id.deck_loop_half, R.id.deck_loop_double, R.id.deck_quantize, R.id.deck_tap, R.id.deck_range,
+            R.id.deck_key
         )) {
             deck.findViewById<View>(id).performClick()
         }
         refresh(activity)
         assertEquals("±16%", deck.findViewById<TextView>(R.id.deck_range).text.toString())
+        assertTrue(activity.engine.decks[0].keyLock)
+    }
+
+    @Test
+    fun `the FLX4 tempo fader takes over without a jump`() {
+        val activity = launch().get()
+        val deck = activity.engine.decks[0]
+        val pitch = activity.findViewById<View>(R.id.deck_a).findViewById<TextView>(R.id.deck_pitch)
+        activity.onKnob(0, Flx4Knob.TEMPO, 0.2f) // the hardware says +6 %, the deck plays at 0 %
+        refresh(activity)
+        assertEquals(1.0, deck.tempoRate, 1e-9)
+        assertEquals("move the fader up to take over", "▲+0.0%", pitch.text.toString())
+
+        activity.onKnob(0, Flx4Knob.TEMPO, 0.5f) // reaches 0 %: from here it drives the tempo
+        activity.onKnob(0, Flx4Knob.TEMPO, 0.4f)
+        refresh(activity)
+        assertEquals(1.02, deck.tempoRate, 1e-3)
+        assertEquals("+2.0%", pitch.text.toString())
+    }
+
+    @Test
+    fun `a playing deck refuses a new track`() {
+        val activity = launch().get()
+        val deck = activity.engine.decks[0]
+        loadDemoTrack(deck, "On Air", "", bpm = 124.0, at = 10.0)
+        deck.togglePlay()
+        activity.loadFromRow(0, Track(Uri.parse("content://test/next.mp3"), "next.mp3", 0L))
+        assertEquals("On Air", deck.title)
+        assertTrue(deck.playing)
     }
 }

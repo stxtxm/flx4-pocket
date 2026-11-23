@@ -4,7 +4,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -33,6 +35,7 @@ import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicIntegerArray
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -66,14 +69,37 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private lateinit var libraryList: ListView
     private lateinit var libraryInfo: TextView
     private lateinit var librarySearch: EditText
+    private lateinit var libraryTarget: TextView
 
     private val tracks = ArrayList<Track>()
     private var visibleTracks: List<Track> = emptyList()
     private var selectedTrack = -1
+
+    /** Deck a tap on a track loads, when the library was opened from a deck; else -1. */
+    private var loadTarget = -1
     private val trackAdapter = TrackAdapter()
 
     private val loadTokens = AtomicIntegerArray(2)
     private val loadedTracks = arrayOfNulls<Track>(2)
+
+    /** Where each FLX4 tempo fader sits (-1..1, + at the bottom), NaN until it moves. */
+    private val tempoFaders = doubleArrayOf(Double.NaN, Double.NaN)
+    private var serviceRunning = false
+    private var lastPlayedAt = 0L
+
+    /** Controller LEDs and the background service, also while the screen is off. */
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (midi.connected) updateLeds()
+            val now = SystemClock.uptimeMillis()
+            if (engine.decks.any { it.playing }) lastPlayedAt = now
+            if (serviceRunning && now - lastPlayedAt > SERVICE_IDLE_MS) {
+                serviceRunning = false
+                stopService(Intent(this@MainActivity, PlaybackService::class.java))
+            }
+            ui.postDelayed(this, TICK_MS)
+        }
+    }
     private val taps = Array(2) { ArrayList<Long>() }
     private val loopInDownAt = LongArray(2)
     private val fxChannels = booleanArrayOf(true, true)
@@ -88,6 +114,20 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
             engine.decks.forEach { it.pause() }
         }
+    }
+
+    private val focusRequest by lazy {
+        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            // Otherwise Android ducks the whole master under every notification sound.
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(focusListener)
+            .build()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,9 +155,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         engine.start()
         midi = Flx4Midi(this, this)
         midi.start()
-        getSystemService(AudioManager::class.java).requestAudioFocus(
-            focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN
-        )
+        ui.post(ticker)
+        getSystemService(AudioManager::class.java).requestAudioFocus(focusRequest)
 
         val savedFolder = preferences.getString(PREF_FOLDER, null)
         if (savedFolder != null) {
@@ -141,11 +180,12 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
+        stopService(Intent(this, PlaybackService::class.java))
         updates.stop()
         midi.close()
         engine.close()
         work.shutdownNow()
-        getSystemService(AudioManager::class.java).abandonAudioFocus(focusListener)
+        getSystemService(AudioManager::class.java).abandonAudioFocusRequest(focusRequest)
         super.onDestroy()
     }
 
@@ -232,10 +272,16 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         libraryList = findViewById(R.id.library_list)
         libraryInfo = findViewById(R.id.library_info)
         librarySearch = findViewById(R.id.library_search)
+        libraryTarget = findViewById(R.id.library_target)
         libraryList.adapter = trackAdapter
         libraryList.setOnItemClickListener { _, _, position, _ ->
-            selectedTrack = position
-            trackAdapter.notifyDataSetChanged()
+            val track = visibleTracks.getOrNull(position) ?: return@setOnItemClickListener
+            if (loadTarget >= 0) {
+                loadFromRow(loadTarget, track)
+            } else {
+                selectedTrack = position // for the controller's LOAD buttons
+                trackAdapter.notifyDataSetChanged()
+            }
         }
         librarySearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -260,7 +306,15 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         masterVu.setLevel(maxOf(engine.meterL, engine.meterR))
         if (frame++ % 6 != 0) return
 
-        panels.forEachIndexed { i, panel -> panel.refresh(engine.masterDeckIndex == i) }
+        // Started while the screen is in front (Android refuses it from the background), so a
+        // set keeps playing when the screen goes off or another app opens. The ticker stops it.
+        if (!serviceRunning && engine.decks.any { it.playing }) {
+            lastPlayedAt = SystemClock.uptimeMillis()
+            serviceRunning = runCatching {
+                startForegroundService(Intent(this, PlaybackService::class.java))
+            }.isSuccess
+        }
+        panels.forEachIndexed { i, panel -> panel.refresh(engine.masterDeckIndex == i, takeover(i)) }
         val fx = engine.beatFx
         val fxColor = getColor(R.color.accent)
         val dark = getColor(R.color.on_accent)
@@ -273,7 +327,6 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         if (engine.decks[0].smartCfx) smartCfx.tint(fxColor, dark) else smartCfx.tint(idle, text)
         if (engine.masterCue) masterCue.tint(fxColor, dark) else masterCue.tint(idle, text)
         updateStatus()
-        if (midi.connected) updateLeds()
     }
 
     private fun updateStatus() {
@@ -297,6 +350,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         for (index in 0..1) {
             val d = engine.decks[index]
             val mode = d.padMode
+            midi.setLed(MidiMap.CH_LOADED, index, d.hasTrack())
             midi.setLed(index, MidiMap.NOTE_PLAY, d.playing)
             midi.setLed(index, MidiMap.NOTE_CUE, d.hasTrack() && !d.playing)
             midi.setLed(index, MidiMap.NOTE_SYNC, d.syncEnabled)
@@ -329,8 +383,13 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     // ---------------------------------------------------------------------
 
     override fun onPlay(deck: Int) {
-        if (engine.decks[deck].hasTrack()) engine.decks[deck].togglePlay()
-        else toast(getString(R.string.play_no_track))
+        if (engine.decks[deck].hasTrack()) engine.decks[deck].togglePlay() else onLoadRequest(deck)
+    }
+
+    /** An empty deck was tapped: open the library for it, or the folder picker on first use. */
+    override fun onLoadRequest(deck: Int) {
+        showLibrary(true, deck)
+        if (preferences.getString(PREF_FOLDER, null) == null) chooseFolder()
     }
 
     override fun onSync(deck: Int) {
@@ -391,7 +450,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onMidiStatus(name: String?) {
         midiName = name
-        if (name != null) toast("$name connected")
+        if (name != null) toast("$name connected") else tempoFaders.fill(Double.NaN)
     }
 
     override fun onButton(deck: Int, button: Flx4Button, down: Boolean) {
@@ -462,7 +521,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val d = engine.decks.getOrNull(deck)
         when (knob) {
             // The fader's low end is its "+" side: 0 is fastest, 1 is slowest.
-            Flx4Knob.TEMPO -> d?.setTempoNormalized(1.0 - 2.0 * value)
+            Flx4Knob.TEMPO -> if (d != null) tempoFader(deck, d, 1.0 - 2.0 * value)
             Flx4Knob.TRIM -> d?.trim = value
             Flx4Knob.EQ_HIGH -> d?.eqHigh = value
             Flx4Knob.EQ_MID -> d?.eqMid = value
@@ -474,6 +533,31 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Flx4Knob.HEADPHONE_LEVEL -> engine.headphoneGain = value
             Flx4Knob.MASTER_LEVEL -> engine.masterGain = value
             Flx4Knob.FX_DEPTH -> engine.beatFx.depth = value
+        }
+    }
+
+    /**
+     * Soft takeover: after a sync, a touch-screen change or a reconnection the
+     * hardware fader only drives the tempo again once it reaches the speed the
+     * deck plays at, so the tempo never jumps.
+     */
+    private fun tempoFader(index: Int, d: Deck, position: Double) {
+        val current = d.tempoPosition
+        val last = tempoFaders[index]
+        tempoFaders[index] = position
+        val inControl = !last.isNaN() && abs(last - current) < TAKEOVER
+        val crossed = !last.isNaN() && (last - current) * (position - current) <= 0.0
+        if (inControl || crossed || abs(position - current) < TAKEOVER) d.setTempoNormalized(position)
+    }
+
+    /** Which way the FLX4 tempo fader must move to take over: -1 up, +1 down, 0 in control or unknown. */
+    private fun takeover(index: Int): Int {
+        val hardware = tempoFaders[index]
+        val current = engine.decks[index].tempoPosition
+        return when {
+            hardware.isNaN() || abs(hardware - current) < TAKEOVER -> 0
+            hardware < current -> 1
+            else -> -1
         }
     }
 
@@ -506,7 +590,12 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     }
 
     override fun onBrowse(delta: Int, shift: Boolean) {
-        showLibrary(true)
+        if (!libraryVisible) {
+            // The first click only shows where the selection is.
+            showLibrary(true)
+            if (selectedTrack >= 0) libraryList.setSelection(selectedTrack)
+            return
+        }
         if (visibleTracks.isEmpty()) return
         selectedTrack = (selectedTrack + delta * if (shift) 10 else 1).coerceIn(0, visibleTracks.size - 1)
         trackAdapter.notifyDataSetChanged()
@@ -519,8 +608,15 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     private val libraryVisible: Boolean get() = libraryPanel.visibility == View.VISIBLE
 
-    private fun showLibrary(show: Boolean) {
+    private fun showLibrary(show: Boolean, target: Int = -1) {
+        loadTarget = if (show) target else -1
         libraryPanel.visibility = if (show) View.VISIBLE else View.GONE
+        waves.forEach { it.scratchable = !show }
+        libraryTarget.visibility = if (loadTarget >= 0) View.VISIBLE else View.GONE
+        if (loadTarget >= 0) {
+            libraryTarget.text = "LOAD TO ${DECK_NAMES[loadTarget]}"
+            libraryTarget.tint(getColor(if (loadTarget == 0) R.color.accent_a else R.color.accent_b), getColor(R.color.on_accent))
+        }
         if (!show) {
             getSystemService(InputMethodManager::class.java)
                 .hideSoftInputFromWindow(librarySearch.windowToken, 0)
@@ -581,14 +677,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
     }
 
+    /** Controller LOAD: with the library closed it opens it first, so nothing loads unseen. */
     private fun loadSelected(deck: Int) {
         val track = visibleTracks.getOrNull(selectedTrack)
-        if (track == null) {
-            showLibrary(true)
-            toast("Select a track first")
-        } else {
-            loadTrack(deck, track)
-        }
+        if (!libraryVisible || track == null) showLibrary(true, deck) else loadFromRow(deck, track)
     }
 
     private fun loadTrack(index: Int, track: Track) {
@@ -597,6 +689,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val panel = panels[index]
         val stale = { loadTokens.get(index) != token }
         deck.clear()
+        midi.setLed(MidiMap.CH_LOADED, index, false) // the jog ring replays its load animation
         loadedTracks[index] = null
         panel.message = "Loading ${track.name}…"
         panel.messageIsError = false
@@ -664,7 +757,12 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
     }
 
-    private fun loadFromRow(deck: Int, track: Track) {
+    internal fun loadFromRow(deck: Int, track: Track) { // internal: the UI test calls it
+        if (engine.decks[deck].playing) {
+            // Load lock: a mistaken tap must not replace the track on air.
+            toast("Deck ${DECK_NAMES[deck]} is playing: pause it to load another track")
+            return
+        }
         loadTrack(deck, track)
         showLibrary(false)
     }
@@ -735,6 +833,13 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         const val PREF_SPLIT = "split_cue"
         const val PREF_ZOOM = "zoom"
         const val QUICK_JUMP_BEATS = 16.0
+
+        /** Tempo fader distance (1 % of its travel) at which it takes over. */
+        const val TAKEOVER = 0.02
+        const val TICK_MS = 50L
+
+        /** The background service stops after this long without playback. */
+        const val SERVICE_IDLE_MS = 10 * 60_000L
         val DECK_NAMES = arrayOf("A", "B")
         val FX_BEATS = doubleArrayOf(0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0)
         val FX_BEAT_LABELS = arrayOf("1/8", "1/4", "1/2", "3/4", "1", "2", "4", "8")

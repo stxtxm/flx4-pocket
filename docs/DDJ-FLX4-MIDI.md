@@ -19,7 +19,7 @@ Status bytes: deck 1 `0x90`/`0xB0`, deck 2 `0x91`/`0xB1`, Beat FX
 
 | Control | Type | Address | App behaviour | Mapped |
 | --- | --- | --- | --- | --- |
-| PLAY/PAUSE | Note | `0x0B` | Play / pause | yes |
+| PLAY/PAUSE | Note | `0x0B` | Play / pause; empty deck: open the library for it | yes |
 | SHIFT + PLAY/PAUSE | Note | `0x0E` | — | no |
 | CUE | Note | `0x0C` | CDJ cue: set / preview while held / return and stop | yes |
 | SHIFT + CUE | Note | `0x48` | Jump to track start | yes |
@@ -40,7 +40,7 @@ Status bytes: deck 1 `0x90`/`0xB0`, deck 2 `0x91`/`0xB1`, Beat FX
 | Jog platter, touched | CC | `0x22` | Scratch: relative, `0x40` = still, 720 ticks per turn | yes |
 | Jog side / vinyl off | CC | `0x21` / `0x23` | Pitch bend; fine positioning when paused | yes |
 | SHIFT + jog | CC | `0x29` | Search, 0.2 s per tick | yes |
-| TEMPO | CC | `0x00` + `0x20` | Pitch fader. Value 0 is the "+" end (fastest) | yes |
+| TEMPO | CC | `0x00` + `0x20` | Pitch fader, with soft takeover (it drives the tempo once it reaches the deck's playing speed). Value 0 is the "+" end (fastest) | yes |
 | TRIM | CC | `0x04` + `0x24` | Trim, unity at centre | yes |
 | EQ HI / MID / LOW | CC | `0x07` / `0x0B` / `0x0F` (+ `0x20`) | ±24 dB shelf / peak / shelf | yes |
 | Channel fader | CC | `0x13` + `0x33` | Channel volume | yes |
@@ -74,10 +74,10 @@ if a mode-button message was missed.
 | HEADPHONES MIXING | CC | `0x0C` + `0x2C` | Cue ↔ master blend in the headphones | yes |
 | HEADPHONES LEVEL | CC | `0x0D` + `0x2D` | Headphones gain | yes |
 | MASTER CUE | Note | `0x63` | Master into the cue bus | yes |
-| BROWSE turn | CC | `0x40` | Move the library selection; `0x01` = +1, `0x7F` = −1 | yes |
+| BROWSE turn | CC | `0x40` | Move the library selection; `0x01` = +1, `0x7F` = −1. With the library closed, the first click only opens it | yes |
 | SHIFT + BROWSE turn | CC | `0x64` | Move ten tracks at a time | yes |
 | BROWSE press (also with SHIFT) | Note | `0x41` (`0x42`) | Open / close the library | yes |
-| LOAD 1 / 2 | Note | `0x46` / `0x47` | Load the selected track | yes |
+| LOAD 1 / 2 | Note | `0x46` / `0x47` | Load the selected track and close the library; with the library closed, open it for that deck instead | yes |
 
 The headphone controls act on the app's headphone bus, which is only audible
 on a four-channel USB output or in split-cue mode.
@@ -116,10 +116,21 @@ Note On to the same address as the control, `0x7F` on and `0x00` off.
 | SMART CFX | ch 7 `0x00` | Smart CFX on |
 | MASTER CUE | ch 7 `0x63` | Master cue on |
 | Channel level meter | CC ch 1/2 `0x02` | Post-fader level, 0–127 |
-| Jog "track loaded" | ch 16 note `0x00` / `0x01` | Sent once on connection |
+| Jog "track loaded" | ch 16 note `0x00` / `0x01` | A track is loaded; `0x00` then `0x7F` on each load replays the jog animation |
 
 Pad LEDs are also written to the SHIFT layer so they stay lit while SHIFT is
 held. Sent values are cached and only changes are transmitted.
+
+## Keep-alive and control positions
+
+Every 200 ms while connected the app sends
+`F0 00 40 05 00 00 04 05 00 50 02 F7`, the keep-alive the Mixxx mapping sends
+at the same rate (captured from DJ software with Wireshark). Mixxx also relies
+on the controller answering it with the position of its faders and knobs, so
+the app's mixer matches the hardware from the moment it is plugged in. `Flx4Decoder` reports a control only
+when its position changes: a repeated answer can never undo a change made on
+the touch screen. The decoder is reset on each connection, so the first answer
+always applies. Not yet verified on hardware.
 
 ## Changed in 0.2.0
 

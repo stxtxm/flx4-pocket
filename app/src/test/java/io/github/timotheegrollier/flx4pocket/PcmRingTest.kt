@@ -29,12 +29,43 @@ class PcmRingTest {
         val out = FloatArray(2)
         assertTrue(ring.sample(0.0, out))
         assertEquals(0.0f, out[0], 1e-6f)
-        assertTrue(ring.sample(0.5, out))
-        assertEquals(0.25f, out[0], 1e-6f)
-        assertEquals(0.125f, out[1], 1e-6f)
+        assertTrue(ring.sample(1.5, out))
+        assertEquals(0.75f, out[0], 1e-6f)
+        assertEquals(0.375f, out[1], 1e-6f)
         assertTrue(ring.sample(1.0, out))
         assertEquals(0.5f, out[0], 1e-6f)
         assertFalse(ring.sample(3.0, out))
+    }
+
+    @Test
+    fun `interpolation keeps the highs that a linear one loses`() {
+        val rate = 44100
+        val ring = PcmRing(rate, seconds = 1)
+        val frames = 4410
+        val sine = FloatArray(frames * 2) { Math.sin(2.0 * Math.PI * 5000.0 * (it / 2) / rate).toFloat() }
+        ring.write(0, sine, frames)
+        val out = FloatArray(2)
+        var worst = 0.0
+        for (i in 10 until frames - 10) {
+            assertTrue(ring.sample(i + 0.5, out))
+            worst = maxOf(worst, Math.abs(out[0] - Math.sin(2.0 * Math.PI * 5000.0 * (i + 0.5) / rate)))
+        }
+        // Linear interpolation is off by up to 0.063 here.
+        assertTrue("worst error $worst", worst < 0.01)
+    }
+
+    @Test
+    fun `the window keeps rolling over many capacities`() {
+        val ring = PcmRing(sampleRate = 10, seconds = 1)
+        val out = FloatArray(2)
+        for (block in 0 until 7) {
+            ring.write(block * 4L, FloatArray(8) { block.toFloat() }, 4)
+        }
+        assertFalse("frame 17 was evicted", ring.sample(17.0, out))
+        assertTrue(ring.sample(20.0, out))
+        assertEquals(5f, out[0], 0f)
+        assertTrue(ring.sample(26.0, out))
+        assertEquals(6f, out[1], 0f)
     }
 
     @Test

@@ -1,20 +1,22 @@
-FLX4 Pocket 0.2.0
+FLX4 Pocket 0.3.0
 
-A new mixing screen, and sound that actually plays.
+Keylock, gap-free hot cues, background playback, faster loading and a
+cleaner sound.
 
-- Fixed: 0.1.x produced no audio (the engine stopped its own mixer at start
-  and the decoder overwrote the audio it was about to play).
-- Scrolling three-band waveforms with beat grid, loops and hot cues. Drag to
-  scratch, pinch to zoom.
-- Mix without a controller: touch knobs and faders, pads (Hot Cue, Beat Loop,
-  Beat Jump, Pad FX 1/2), CDJ cue, pitch bend, sync.
-- Beat FX: echo, low-cut echo, reverb, flanger, phaser, trans. Smart CFX.
-- DDJ-FLX4: jog scratch, Beat FX section, Smart CFX, loop call, pad FX,
-  level meters; tempo fader and browse direction corrected.
-- USB audio: the controller's sound card is used automatically, with master
-  on outputs 1-2 and headphones on 3-4 when Android exposes four channels.
-- Updates download in the background from the top-bar button; nothing is
-  installed until you tap INSTALL.
+- KEY on a deck: the tempo changes, the pitch does not.
+- Hot cues, loops and jumps play at once, without gaps or clicks, a few
+  seconds after a track is loaded (the whole track is kept in memory).
+- The mix keeps playing with the screen off or another app in front.
+- A playing deck refuses a new track: pause it first.
+- Tap an empty deck (or its PLAY) to open the library for it, then tap a
+  track to load it there. The waveforms stay visible while you browse.
+- FLX4: the app picks up every fader and knob position when the controller is
+  plugged in. The tempo fader takes over smoothly (follow the arrow next to
+  the pitch). LOAD opens the library first if it is closed.
+- Sync follows the master deck's tempo when it moves.
+- Sound: a master limiter instead of clipping, smooth faders and cuts,
+  clearer highs when pitched, EQ range -26 / +6 dB; notifications no longer
+  lower the master.
 
-Not yet verified on a real phone or controller. If the FLX4 does not power on
-from the phone, use its separate power port.
+Not yet verified on a real phone or controller. Turn the phone's media volume
+all the way up when the FLX4 is connected.

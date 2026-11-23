@@ -16,12 +16,12 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
 > **Status: not yet verified on hardware.** Everything here is covered by JVM
 > tests (DSP, deck logic, the MIDI address table, the real screen under
-> Robolectric), but no phone or controller was available where 0.2.0 was
+> Robolectric), but no phone or controller was available where 0.3.0 was
 > built. See [docs/TESTING.md](docs/TESTING.md) for what must be checked on a
 > device, and [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for what Android
 > itself may refuse (controller power, four-channel USB audio).
 
-## What is in 0.2.0
+## What is in 0.3.0
 
 **Mixing from the phone**
 
@@ -35,17 +35,32 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   phaser, trans).
 - CDJ-style CUE (hold to preview), PLAY, SYNC (long press: sync master),
   pitch-bend buttons, tempo fader with ±6 / ±10 / ±16 % / WIDE ranges, TAP.
+- KEY (keylock): the tempo changes, the pitch does not (WSOLA time-stretch).
+- A synced deck follows the master's tempo when it moves.
 - Loop IN / OUT / RELOOP, halve / double, quantize.
-- Mixer: trim, three-band EQ, filter, channel faders with level meters,
-  equal-power crossfader, headphone cue buttons, master limiter.
+- Mixer: trim, three-band EQ (-26 / +6 dB, like a DJM), filter, channel faders
+  with level meters, equal-power crossfader, headphone cue buttons, master
+  peak limiter. Faders are ramped (no zipper noise) and pitched audio uses
+  cubic interpolation.
 - Beat FX on deck A, deck B or the master: echo, low-cut echo, reverb,
   flanger, phaser, trans, with beat length and depth.
 - Smart CFX: the filter knob becomes a resonant sweep with a synced echo.
 - Searchable library over a music folder (no storage permission), hot cues and
-  analysis remembered per track.
+  analysis remembered per track. Tap an empty deck (or its PLAY) to open the
+  library for that deck, then tap a track to load it there. The library opens
+  under the waveforms, so the playing deck and its remaining time stay in
+  sight.
+- A deck that is playing refuses a new track (load lock): pause it first.
+- A few seconds after loading, the whole track is in memory, so hot cues,
+  loops and jumps play at once, with a short crossfade instead of a click.
+- The mix keeps playing with the screen off or another app in front; a
+  notification shows while it does.
 
 **With the DDJ-FLX4**
 
+- On connection the app sends the controller's keep-alive (from the Mixxx
+  mapping), which the FLX4 answers with the position of every fader and knob:
+  the mixer starts where the hardware is.
 - The official MIDI addresses for transport, jog (scratch / bend / search),
   tempo, mixer, filter, Smart CFX, Beat FX, loop section, browse / load and
   the performance pads, with LED feedback and the channel level meters.
@@ -64,7 +79,6 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
 ## Not here yet
 
-- Keylock / time-stretch: tempo changes pitch, like vinyl.
 - Sampler, Keyboard / Stems and Key Shift pad modes, Smart Fader.
 - Streaming services, recording, DVS.
 
@@ -74,13 +88,16 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.2.0.apk
+   adb install -r FLX4-Pocket-0.3.0.apk
    ```
 3. Open FLX4 Pocket, tap **FOLDER** in the library and pick your music
-   folder. Tap **DECK A** or **DECK B** on a track to load it.
+   folder. Tap an empty deck, then a track, to load it there; **DECK A** and
+   **DECK B** on each track load it on either deck.
 4. Optional: connect the DDJ-FLX4. Power it through its **power** USB-C port
    (5 V adapter or power bank) and connect the phone to its **device** USB-C
-   port. The status line turns green and shows which output is in use.
+   port. The status line turns green and shows which output is in use. Turn
+   the phone's media volume all the way up: Android scales the USB output by
+   it. Set the level with the FLX4's MASTER LEVEL knob.
 5. **AUDIO** lists the outputs and holds the master / headphones levels. On a
    stereo-only output, **Split cue** sends the master left and the headphones
    right for a splitter cable.
@@ -99,19 +116,19 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.2.0.apk
+adb install -r FLX4-Pocket-0.3.0.apk
 ```
 
 ## Controller workflow
 
 | FLX4 control | App action |
 | --- | --- |
-| PLAY / PAUSE | Play / pause |
+| PLAY / PAUSE | Play / pause; on an empty deck, open the library for it |
 | CUE | CDJ cue: set, preview while held, back to cue when playing |
 | SHIFT + CUE | Back to the start of the track |
 | BEAT SYNC / long press | Sync to the other deck / make this deck the master |
 | SHIFT + BEAT SYNC | Cycle the tempo range |
-| Tempo fader | Pitch, 14-bit, across the selected range |
+| Tempo fader | Pitch, 14-bit, across the selected range. Soft takeover: after a sync, a touch change or a reconnection it takes over once it reaches the playing speed; until then an arrow next to the pitch shows which way to move it |
 | Jog top (touch) / side | Scratch / pitch bend |
 | SHIFT + jog | Fast search |
 | TRIM, EQ, channel fader, crossfader | Mixer |
@@ -123,7 +140,8 @@ adb install -r FLX4-Pocket-0.2.0.apk
 | CUE/LOOP CALL ◄ ► | Halve / double the loop; with SHIFT jump 16 beats |
 | HOT CUE, PAD FX1/2, BEAT JUMP, BEAT LOOP + pads | Pad modes |
 | SHIFT + hot-cue pad | Delete the hot cue |
-| Browse turn / press, LOAD 1 / 2 | Library |
+| Browse turn / press | Library selection (the first turn only opens it) / open, close |
+| LOAD 1 / 2 | Load the selected track and close the library; with the library closed, open it for that deck first |
 | SHIFT + channel CUE | Toggle quantize |
 
 The complete address table is in [docs/DDJ-FLX4-MIDI.md](docs/DDJ-FLX4-MIDI.md).

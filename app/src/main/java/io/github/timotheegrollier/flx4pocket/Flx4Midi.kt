@@ -44,6 +44,19 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
         }
     }
 
+    /**
+     * The keep-alive the Mixxx mapping sends every 200 ms (captured from DJ
+     * software). The FLX4 answers it with the position of every fader and knob,
+     * so the app starts from what the hardware shows; [Flx4Decoder] ignores
+     * the repeats.
+     */
+    private val keepAlive = object : Runnable {
+        override fun run() {
+            midiInput?.let { runCatching { it.send(KEEP_ALIVE, 0, KEEP_ALIVE.size) } }
+            handler.postDelayed(this, KEEP_ALIVE_MS)
+        }
+    }
+
     private val receiver = object : MidiReceiver() {
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
             // The framework reuses msg after this call returns.
@@ -130,9 +143,12 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
                     }
                 }
                 sent.clear()
+                decoder.reset()
                 // "Track loaded" jog illumination doubles as a connection hello.
                 send(0x90 or MidiMap.CH_LOADED, 0x00, 0x7F)
                 send(0x90 or MidiMap.CH_LOADED, 0x01, 0x7F)
+                handler.removeCallbacks(keepAlive)
+                keepAlive.run()
                 listener.onMidiStatus(nameOf(info))
             }, handler)
         } catch (e: Exception) {
@@ -142,6 +158,7 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
     }
 
     private fun closeDevice() {
+        handler.removeCallbacks(keepAlive)
         outputs.forEach { runCatching { it.close() } }
         outputs.clear()
         runCatching { midiInput?.close() }
@@ -163,5 +180,9 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
 
     companion object {
         private const val TAG = "Flx4Midi"
+        private const val KEEP_ALIVE_MS = 200L
+        private val KEEP_ALIVE = byteArrayOf(
+            0xF0.toByte(), 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7.toByte()
+        )
     }
 }

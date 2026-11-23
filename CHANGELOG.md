@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.3.0
+
+Faster loading, keylock, gap-free hot cues, background playback, a
+better-behaved DDJ-FLX4 and a cleaner sound.
+
+### Added
+
+- KEY (keylock) per deck: the tempo changes, the pitch does not. WSOLA
+  time-stretch read straight from the track at the playhead, so cues and hot
+  cues stay instant. Scratching stays vinyl.
+- The whole track is decoded into memory in the background (tracks up to
+  15 min, about 10 MB a minute): within seconds of loading, hot cues, loops
+  and jumps anywhere play without a gap. Jumps crossfade over 3 ms instead of
+  clicking.
+- Playback goes on with the screen off or another app in front (foreground
+  service with a notification, stopped after ten idle minutes). Controller
+  LEDs keep updating meanwhile.
+- Load lock: a playing deck refuses a new track.
+- FLX4 tempo fader soft takeover: after a sync, a touch change or a
+  reconnection it only drives the tempo once it reaches the playing speed; an
+  arrow next to the pitch shows which way to move it.
+- Tap an empty deck, or press its PLAY, to open the library for that deck
+  (the folder picker on first use); a tap on a track then loads it there.
+- The library opens under the waveforms, which stay in sight with their
+  remaining time. While it is open a finger on a waveform cannot grab a
+  playing track.
+- FLX4: the keep-alive from the Mixxx mapping is sent every 200 ms; the
+  controller answers it with its fader and knob positions, so the app starts
+  where the hardware is. Repeated positions are ignored, so they never undo a
+  touch-screen change.
+- FLX4: LOAD with the library closed opens it for that deck; LOAD then loads
+  and closes it. The first browse click only opens the library. The jog ring
+  plays its load animation on every load.
+
+### Changed
+
+- Master limiter instead of a clipping curve: loud overlaps are turned down,
+  not distorted. Channel faders and the crossfader are ramped (no zipper
+  noise or clicks on cuts).
+- Pitched or non-44.1 kHz audio uses cubic interpolation (clearer highs).
+- EQ range -26 / +6 dB, like a Pioneer mixer, instead of +/-24 dB.
+- Notification sounds no longer duck the master.
+
+### Fixed
+
+- A synced deck now follows the master's tempo when it changes; before, it
+  kept the tempo it had when SYNC was pressed and drifted.
+- Once full, each deck's buffer shifted all 24 seconds of audio on every
+  decoder write (about 300 MB/s) while the mixer waited; the buffer is now
+  circular.
+
+### Not verified
+
+Still no phone or controller where this was built. The keep-alive and its
+answer come from the Mixxx mapping; see `docs/TESTING.md`.
+
 ## 0.2.0
 
 A rewrite of the screen and of most of the audio path.

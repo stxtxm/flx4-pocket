@@ -58,6 +58,27 @@ class DspTest {
     }
 
     @Test
+    fun `eq range is that of a DJ mixer`() {
+        assertEquals(-26.0, MixerMath.eqDecibels(0f), 1e-6)
+        assertEquals(6.0, MixerMath.eqDecibels(1f), 1e-6)
+    }
+
+    @Test
+    fun `limiter turns loud passages down instead of clipping them`() {
+        val limiter = Limiter(44100)
+        assertEquals("quiet audio passes untouched", 1f, limiter.gainFor(0.5f), 0f)
+        var loudest = 0f
+        for (i in 0 until 44100) {
+            val x = 1.6f * Math.sin(2.0 * Math.PI * 100.0 * i / 44100.0).toFloat()
+            loudest = maxOf(loudest, Math.abs(x * limiter.gainFor(Math.abs(x))))
+        }
+        assertTrue("peaks stay under the ceiling, got $loudest", loudest <= Limiter.CEILING + 1e-6f)
+        assertTrue("and still reach it", loudest > 0.9f)
+        repeat(44100) { limiter.gainFor(0.1f) }
+        assertEquals("the gain recovers once it is quiet again", 1f, limiter.gainFor(0.1f), 1e-3f)
+    }
+
+    @Test
     fun `soft clip is transparent below the knee and never exceeds full scale`() {
         assertEquals(0.5f, MixerMath.softClip(0.5f), 0f)
         assertEquals(-0.8f, MixerMath.softClip(-0.8f), 0f)

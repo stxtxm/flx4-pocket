@@ -44,9 +44,31 @@ class Flx4Decoder(private val listener: Flx4Listener) {
     private val msb = IntArray(16 * 32) { -1 }
     private val lsb = IntArray(16 * 32)
 
+    // Last position reported per absolute control. The FLX4 answers the
+    // keep-alive query with every position; only changes may move the mixer,
+    // or a touch-screen change would be undone a moment later.
+    private val reported = IntArray(16 * 32) { -1 }
+
     private var status = 0
     private var data1 = -1
     private var inSysex = false
+
+    /** Forgets everything heard so far: a reconnected controller reports its positions afresh. */
+    fun reset() {
+        msb.fill(-1)
+        lsb.fill(0)
+        reported.fill(-1)
+        status = 0
+        data1 = -1
+        inSysex = false
+    }
+
+    private fun changed(channel: Int, control: Int, value: Int): Boolean {
+        val key = channel * 32 + (control and 0x1F)
+        if (reported[key] == value) return false
+        reported[key] = value
+        return true
+    }
 
     fun feed(data: ByteArray, offset: Int = 0, count: Int = data.size) {
         val end = (offset + count).coerceAtMost(data.size)
@@ -95,8 +117,13 @@ class Flx4Decoder(private val listener: Flx4Listener) {
                 MidiMap.NOTE_LOAD_B -> listener.onButton(1, Flx4Button.LOAD, down)
             }
             MidiMap.CH_FX, MidiMap.CH_FX_2 -> when (note) {
-                MidiMap.NOTE_FX_CH1 -> listener.onButton(0, Flx4Button.FX_CHANNEL, down)
-                MidiMap.NOTE_FX_CH2 -> listener.onButton(1, Flx4Button.FX_CHANNEL, down)
+                // The channel selector is a switch: report position changes only.
+                MidiMap.NOTE_FX_CH1 -> if (changed(channel, note, if (down) 1 else 0)) {
+                    listener.onButton(0, Flx4Button.FX_CHANNEL, down)
+                }
+                MidiMap.NOTE_FX_CH2 -> if (changed(channel, note, if (down) 1 else 0)) {
+                    listener.onButton(1, Flx4Button.FX_CHANNEL, down)
+                }
                 MidiMap.NOTE_FX_ON -> listener.onButton(-1, Flx4Button.FX_ON, down)
                 MidiMap.NOTE_FX_CLEAR -> listener.onButton(-1, Flx4Button.FX_CLEAR, down)
                 MidiMap.NOTE_FX_BEAT_LEFT -> listener.onButton(-1, Flx4Button.FX_BEAT_LEFT, down)
@@ -199,7 +226,7 @@ class Flx4Decoder(private val listener: Flx4Listener) {
             }
 
             MidiMap.CH_FX, MidiMap.CH_FX_2 ->
-                if (cc == MidiMap.CC_FX_DEPTH) {
+                if (cc == MidiMap.CC_FX_DEPTH && changed(channel, cc, value)) {
                     listener.onKnob(-1, Flx4Knob.FX_DEPTH, value / 127f)
                 }
         }
@@ -215,13 +242,15 @@ class Flx4Decoder(private val listener: Flx4Listener) {
 
     /**
      * Combines MSB (cc 0..31) and LSB (cc + 0x20) into 0..1. Returns null until
-     * the MSB has been seen, so a stray LSB cannot make a control jump.
+     * the MSB has been seen, so a stray LSB cannot make a control jump, and
+     * when the position has not changed.
      */
     private fun knob14(channel: Int, cc: Int, value: Int): Float? {
         if (cc >= 0x40) return null
         val key = channel * 32 + (cc and 0x1F)
         if (cc >= MidiMap.LSB_OFFSET) lsb[key] = value else msb[key] = value
         if (msb[key] < 0) return null
-        return ((msb[key] shl 7) or lsb[key]) / 16383f
+        val position = (msb[key] shl 7) or lsb[key]
+        return if (changed(channel, cc, position)) position / 16383f else null
     }
 }

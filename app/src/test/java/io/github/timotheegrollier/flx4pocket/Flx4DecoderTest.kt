@@ -113,6 +113,20 @@ class Flx4DecoderTest {
     }
 
     @Test
+    fun `a position repeated by the keep-alive answer is reported once`() {
+        assertEquals(listOf("knob -1 CROSSFADER 0.500"), send(0xB6, 0x1F, 0x40, 0x3F, 0x00))
+        assertTrue(send(0xB6, 0x1F, 0x40, 0x3F, 0x00).isEmpty())
+        assertEquals(listOf("knob -1 FX_DEPTH 0.504"), send(0xB4, 0x02, 0x40))
+        assertTrue(send(0xB4, 0x02, 0x40).isEmpty())
+        assertEquals(listOf("button 0 FX_CHANNEL true"), send(0x94, 0x10, 0x7F))
+        assertTrue(send(0x94, 0x10, 0x7F).isEmpty())
+        assertEquals(listOf("knob -1 CROSSFADER 0.508"), send(0xB6, 0x1F, 0x41))
+
+        decoder.reset() // reconnection: the next answer applies again
+        assertEquals(listOf("knob -1 FX_DEPTH 0.504"), send(0xB4, 0x02, 0x40))
+    }
+
+    @Test
     fun `an LSB before any MSB is ignored`() {
         assertTrue(send(0xB0, 0x24, 0x10).isEmpty())
         assertEquals(listOf("knob 0 TRIM 0.501"), send(0xB0, 0x04, 0x40))
