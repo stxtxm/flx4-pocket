@@ -12,6 +12,7 @@
         <!-- Scrolling waveforms, stacked so the beats of both decks line up. They
              own the top of the screen and grow when the panels below fold away. -->
         <LinearLayout
+            android:id="@+id/waves"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
@@ -31,8 +32,10 @@
                 layout="@layout/view_wave" />
         </LinearLayout>
 
-        <!-- Panel toggles in the order of the panels below, then the app controls. -->
+        <!-- Panel toggles in the order of the panels below, then the app controls.
+             Dragged up or down outside its buttons, it resizes the waveforms. -->
         <LinearLayout
+            android:id="@+id/control_bar"
             android:layout_width="match_parent"
             android:layout_height="36dp"
             android:gravity="center_vertical"
@@ -59,10 +62,21 @@
                 android:text="DECK B" />
 
             <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:contentDescription="Drag up or down to resize the waveforms"
+                android:gravity="center"
+                android:paddingStart="10dp"
+                android:paddingEnd="2dp"
+                android:text="⇕"
+                android:textColor="@color/text_dim"
+                android:textSize="16sp" />
+
+            <TextView
                 android:id="@+id/status"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
+                android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
@@ -278,9 +292,28 @@
                 android:textSize="11sp" />
 
             <TextView
+                android:id="@+id/library_sort"
+                style="@style/Btn.Wrap"
+                android:contentDescription="Sort the tracks by BPM"
+                android:text="BPM ↑" />
+
+            <TextView
+                android:id="@+id/library_playlist"
+                style="@style/Btn.Wrap"
+                android:contentDescription="New playlist"
+                android:text="+ PLAYLIST" />
+
+            <TextView
                 android:id="@+id/library_folder"
                 style="@style/Btn.Wrap"
-                android:text="FOLDER" />
+                android:contentDescription="Add a music folder"
+                android:text="+ FOLDER" />
+
+            <TextView
+                android:id="@+id/library_files"
+                style="@style/Btn.Wrap"
+                android:contentDescription="Add tracks"
+                android:text="+ TRACKS" />
 
             <TextView
                 android:id="@+id/library_close"
@@ -288,13 +321,48 @@
                 android:text="CLOSE" />
         </LinearLayout>
 
-        <ListView
-            android:id="@+id/library_list"
+        <!-- Folders (BROWSE press moves between the two lists, as in rekordbox) | tracks. -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:divider="@color/line"
-            android:dividerHeight="1dp" />
+            android:orientation="horizontal">
+
+            <ListView
+                android:id="@+id/library_folders"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:divider="@null" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:background="@color/line" />
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="2.4">
+
+                <ListView
+                    android:id="@+id/library_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:divider="@color/line"
+                    android:dividerHeight="1dp" />
+
+                <TextView
+                    android:id="@+id/library_empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text="Add your music: + FOLDER takes a whole folder and its subfolders, + TRACKS single files. Long-press a track to put it in a playlist, a folder or playlist to remove it."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp" />
+            </FrameLayout>
+        </LinearLayout>
     </LinearLayout>
         </FrameLayout>
     </LinearLayout>

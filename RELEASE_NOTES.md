@@ -1,14 +1,15 @@
-FLX4 Pocket 0.4.0
+FLX4 Pocket 0.5.0
 
-Waveforms first, loops that stay on the beat, less delay.
+Your library on the phone and on the FLX4, memory cues, instant doubles.
 
-- The bar above the waveforms is gone, and nothing covers them any more.
-- DECK A, MIXER and DECK B (under the waveforms) fold their panel away. With
-  all three folded, the waveforms fill the screen. The app remembers it.
-- FLX4 loops as in rekordbox: 4 BEAT/EXIT starts a 4-beat loop or exits it,
-  SHIFT + 4 BEAT/EXIT turns the last loop back on, and IN or OUT during a loop
-  lets the jog move that point (the button blinks).
-- Loops stay on the beat and no longer click at the seam.
-- Less delay between a fader or a button and the sound. On-screen PLAY, loop
-  buttons, TAP and FX ON act as soon as you touch them. The status line shows
-  the delay in ms.
+- + FOLDER adds a music folder with its subfolders, as many as you like;
+  + TRACKS adds single files. A folder column shows them as a tree.
+- Playlists: + PLAYLIST, then long-press a track to add it. BPM ↑ sorts by
+  tempo.
+- FLX4 as in rekordbox: BROWSE press moves between folders and tracks;
+  SHIFT + CUE/LOOP CALL ► saves a memory cue (or the loop playing), ◄ ►
+  call them, SHIFT + ◄ deletes; LOAD pressed twice doubles the other deck;
+  SHIFT + LOAD 1 shows tracks near the master's tempo, SHIFT + LOAD 2 opens
+  or closes the library.
+- Drag the bar under the waveforms to make them taller or shorter.
+- Loops with KEY now restart cleanly at the seam.

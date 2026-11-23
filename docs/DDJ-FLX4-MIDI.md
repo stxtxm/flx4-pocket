@@ -35,8 +35,9 @@ Status bytes: deck 1 `0x90`/`0xB0`, deck 2 `0x91`/`0xB1`, Beat FX
 | 4 BEAT/EXIT | Note | `0x4D` | 4-beat loop from the nearest beat / exit the loop | yes |
 | SHIFT + 4 BEAT/EXIT | Note | `0x50` | Active loop: the last loop on or off, in phase | yes |
 | SHIFT + IN / OUT | Note | `0x4C` / `0x4E` | None in rekordbox; ignored | no |
-| CUE/LOOP CALL ◄ / ► | Note | `0x51` / `0x53` | Halve / double the active loop | yes |
-| SHIFT + CUE/LOOP CALL ◄ / ► | Note | `0x3E` / `0x3D` | Jump 16 beats back / forward | yes |
+| CUE/LOOP CALL ◄ / ► | Note | `0x51` / `0x53` | During a loop: halve / double it. Otherwise: call the previous / next memory cue (a point becomes the cue point, a memory loop plays) | yes |
+| SHIFT + CUE/LOOP CALL ◄ | Note | `0x3E` | Delete the memory cue called last | yes |
+| SHIFT + CUE/LOOP CALL ► | Note | `0x3D` | Save the loop playing, or else the cue point, as a memory cue | yes |
 | Headphones CUE | Note | `0x54` | Deck in the headphone cue bus | yes |
 | SHIFT + headphones CUE | Note | `0x68` | Toggle quantize | yes |
 | Jog touch (also with SHIFT) | Note | `0x36` (`0x67`) | Scratch mode while touched | yes |
@@ -77,10 +78,13 @@ if a mode-button message was missed.
 | HEADPHONES MIXING | CC | `0x0C` + `0x2C` | Cue ↔ master blend in the headphones | yes |
 | HEADPHONES LEVEL | CC | `0x0D` + `0x2D` | Headphones gain | yes |
 | MASTER CUE | Note | `0x63` | Master into the cue bus | yes |
-| BROWSE turn | CC | `0x40` | Move the library selection; `0x01` = +1, `0x7F` = −1. With the library closed, the first click only opens it | yes |
-| SHIFT + BROWSE turn | CC | `0x64` | Move ten tracks at a time | yes |
-| BROWSE press (also with SHIFT) | Note | `0x41` (`0x42`) | Open / close the library | yes |
-| LOAD 1 / 2 | Note | `0x46` / `0x47` | Load the selected track and close the library; with the library closed, open it for that deck instead | yes |
+| BROWSE turn | CC | `0x40` | Move in the folders or the tracks, whichever has the cursor; `0x01` = +1, `0x7F` = −1. With the library closed, the first click only opens it | yes |
+| SHIFT + BROWSE turn | CC | `0x64` | Move ten rows at a time | yes |
+| BROWSE press | Note | `0x41` | As in rekordbox: move the cursor between the folders and the tracks (opens a closed library) | yes |
+| SHIFT + BROWSE press | Note | `0x42` | Open / close the library (rekordbox: open a folder, which BROWSE press does here) | yes |
+| LOAD 1 / 2 | Note | `0x46` / `0x47` | Load the selected track and close the library; with the library closed, open it for that deck instead. Pressed twice: instant doubles (the other deck's track, at its place and speed) | yes |
+| SHIFT + LOAD 1 | Note | `0x68` | Library sorted by BPM, on the master deck's tempo (rekordbox for Android: related tracks) | yes |
+| SHIFT + LOAD 2 | Note | `0x7A` | Open / close the library (rekordbox for Android: browse window) | yes |
 
 The headphone controls act on the app's headphone bus, which is only audible
 on a four-channel USB output or in split-cue mode.

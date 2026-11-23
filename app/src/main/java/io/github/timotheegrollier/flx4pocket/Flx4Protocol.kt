@@ -3,14 +3,14 @@ package io.github.timotheegrollier.flx4pocket
 /** Buttons of the DDJ-FLX4. Global ones are reported with deck `-1`. */
 enum class Flx4Button {
     PLAY, CUE, TO_START, SHIFT, SYNC, MASTER, TEMPO_RANGE,
-    LOOP_IN, LOOP_OUT, FOUR_BEAT_EXIT, ACTIVE_LOOP, LOOP_HALVE, LOOP_DOUBLE,
-    JUMP_BACK, JUMP_FORWARD, PFL, QUANTIZE, JOG_TOUCH, LOAD,
+    LOOP_IN, LOOP_OUT, FOUR_BEAT_EXIT, ACTIVE_LOOP, CUE_LOOP_CALL_PREV, CUE_LOOP_CALL_NEXT,
+    MEMORY_DELETE, MEMORY_SAVE, PFL, QUANTIZE, JOG_TOUCH, LOAD, SHIFT_LOAD,
 
     /** Beat FX channel selector: `deck` is the channel, `down` its state. */
     FX_CHANNEL,
 
     // Global.
-    BROWSE_PRESS, SMART_CFX, SMART_FADER, MASTER_CUE,
+    BROWSE_PRESS, BROWSE_SHIFT_PRESS, SMART_CFX, SMART_FADER, MASTER_CUE,
     FX_SELECT, FX_SELECT_PREV, FX_BEAT_LEFT, FX_BEAT_RIGHT, FX_ON, FX_CLEAR
 }
 
@@ -111,10 +111,12 @@ class Flx4Decoder(private val listener: Flx4Listener) {
                 MidiMap.NOTE_SMART_CFX -> listener.onButton(-1, Flx4Button.SMART_CFX, down)
                 MidiMap.NOTE_SMART_FADER -> listener.onButton(-1, Flx4Button.SMART_FADER, down)
                 MidiMap.NOTE_MASTER_CUE -> listener.onButton(-1, Flx4Button.MASTER_CUE, down)
-                MidiMap.NOTE_BROWSE_PRESS, MidiMap.NOTE_BROWSE_SHIFT_PRESS ->
-                    listener.onButton(-1, Flx4Button.BROWSE_PRESS, down)
+                MidiMap.NOTE_BROWSE_PRESS -> listener.onButton(-1, Flx4Button.BROWSE_PRESS, down)
+                MidiMap.NOTE_BROWSE_SHIFT_PRESS -> listener.onButton(-1, Flx4Button.BROWSE_SHIFT_PRESS, down)
                 MidiMap.NOTE_LOAD_A -> listener.onButton(0, Flx4Button.LOAD, down)
                 MidiMap.NOTE_LOAD_B -> listener.onButton(1, Flx4Button.LOAD, down)
+                MidiMap.NOTE_SHIFT_LOAD_A -> listener.onButton(0, Flx4Button.SHIFT_LOAD, down)
+                MidiMap.NOTE_SHIFT_LOAD_B -> listener.onButton(1, Flx4Button.SHIFT_LOAD, down)
             }
             MidiMap.CH_FX, MidiMap.CH_FX_2 -> when (note) {
                 // The channel selector is a switch: report position changes only.
@@ -152,10 +154,10 @@ class Flx4Decoder(private val listener: Flx4Listener) {
             MidiMap.NOTE_LOOP_OUT -> Flx4Button.LOOP_OUT
             MidiMap.NOTE_FOUR_BEAT_EXIT -> Flx4Button.FOUR_BEAT_EXIT
             MidiMap.NOTE_ACTIVE_LOOP -> Flx4Button.ACTIVE_LOOP
-            MidiMap.NOTE_LOOP_HALVE -> Flx4Button.LOOP_HALVE
-            MidiMap.NOTE_LOOP_DOUBLE -> Flx4Button.LOOP_DOUBLE
-            MidiMap.NOTE_JUMP_BACK -> Flx4Button.JUMP_BACK
-            MidiMap.NOTE_JUMP_FORWARD -> Flx4Button.JUMP_FORWARD
+            MidiMap.NOTE_CUE_LOOP_CALL_PREV -> Flx4Button.CUE_LOOP_CALL_PREV
+            MidiMap.NOTE_CUE_LOOP_CALL_NEXT -> Flx4Button.CUE_LOOP_CALL_NEXT
+            MidiMap.NOTE_MEMORY_DELETE -> Flx4Button.MEMORY_DELETE
+            MidiMap.NOTE_MEMORY_SAVE -> Flx4Button.MEMORY_SAVE
             MidiMap.NOTE_CUE_CHANNEL -> Flx4Button.PFL
             MidiMap.NOTE_QUANTIZE -> Flx4Button.QUANTIZE
             MidiMap.NOTE_JOG_TOUCH, MidiMap.NOTE_JOG_SHIFT_TOUCH -> Flx4Button.JOG_TOUCH

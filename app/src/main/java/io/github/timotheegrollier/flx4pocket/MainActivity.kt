@@ -1,5 +1,6 @@
 package io.github.timotheegrollier.flx4pocket
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
@@ -16,8 +17,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Choreographer
+import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -31,6 +35,8 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -77,6 +83,20 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private val tracks = ArrayList<Track>()
     private var visibleTracks: List<Track> = emptyList()
     private var selectedTrack = -1
+    private lateinit var folderList: ListView
+    private lateinit var libraryEmpty: View
+    private var folderRows: List<FolderRow> = emptyList()
+    private var selectedFolder = 0
+    private val folderAdapter = FolderAdapter()
+
+    /** The list the controller's BROWSE knob moves in: folders, or tracks (as in rekordbox). */
+    private var browseFolders = false
+    private var sortByBpm = false
+    private lateinit var sortButton: TextView
+
+    /** Playlists by name, in creation order: track URIs in play order. */
+    private val playlists = LinkedHashMap<String, MutableList<String>>()
+    private var waveShare = 1f / 3f
 
     /** Deck a tap on a track loads, when the library was opened from a deck; else -1. */
     private var loadTarget = -1
@@ -104,6 +124,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
     }
     private val taps = Array(2) { ArrayList<Long>() }
+    private val lastLoadPress = LongArray(2)
     private val fxChannels = booleanArrayOf(true, true)
     private var fxBeatIndex = 2 // 1/2 beat
     private var midiName: String? = null
@@ -161,11 +182,14 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         ui.post(ticker)
         getSystemService(AudioManager::class.java).requestAudioFocus(focusRequest)
 
-        val savedFolder = preferences.getString(PREF_FOLDER, null)
-        if (savedFolder != null) {
-            scanFolder(Uri.parse(savedFolder))
+        // Up to 0.4 the library was one folder; it becomes the first of the list.
+        preferences.getString(PREF_FOLDER, null)?.let { old ->
+            preferences.edit().putStringSet(PREF_FOLDERS, sources(PREF_FOLDERS) + old).remove(PREF_FOLDER).apply()
+        }
+        if (hasMusic()) {
+            scanLibrary()
         } else {
-            libraryInfo.text = "Choose your music folder"
+            libraryInfo.text = "Add your music"
             showLibrary(true)
         }
     }
@@ -276,15 +300,39 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         libraryInfo = findViewById(R.id.library_info)
         librarySearch = findViewById(R.id.library_search)
         libraryTarget = findViewById(R.id.library_target)
+        libraryEmpty = findViewById(R.id.library_empty)
+        folderList = findViewById(R.id.library_folders)
+        folderList.adapter = folderAdapter
+        folderList.setOnItemClickListener { _, _, position, _ ->
+            browseFolders = true
+            selectFolder(position)
+        }
+        folderList.setOnItemLongClickListener { _, _, position, _ ->
+            val row = folderRows.getOrNull(position)
+            when {
+                row == null -> Unit
+                row.playlist != null -> confirmDeletePlaylist(row.playlist)
+                row.path.isEmpty() -> Unit
+                row.depth > 0 -> toast("Remove ${row.path.substringBefore('/')} to take it out of the library")
+                else -> confirmRemove(row.label, tracks.filter { Library.inFolder(it.folder, row.path) })
+            }
+            true
+        }
         libraryList.adapter = trackAdapter
         libraryList.setOnItemClickListener { _, _, position, _ ->
             val track = visibleTracks.getOrNull(position) ?: return@setOnItemClickListener
+            browseFolders = false
             if (loadTarget >= 0) {
                 loadFromRow(loadTarget, track)
             } else {
                 selectedTrack = position // for the controller's LOAD buttons
                 trackAdapter.notifyDataSetChanged()
+                folderAdapter.notifyDataSetChanged()
             }
+        }
+        libraryList.setOnItemLongClickListener { _, _, position, _ ->
+            visibleTracks.getOrNull(position)?.let(::trackMenu)
+            true
         }
         librarySearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -292,6 +340,14 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             override fun afterTextChanged(s: Editable?) = filterTracks()
         })
         findViewById<View>(R.id.library_folder).setOnClickListener { chooseFolder() }
+        findViewById<View>(R.id.library_files).setOnClickListener { chooseFiles() }
+        findViewById<View>(R.id.library_playlist).setOnClickListener { newPlaylist(null) }
+        sortButton = findViewById(R.id.library_sort)
+        sortButton.setOnClickListener {
+            sortByBpm = !sortByBpm
+            filterTracks()
+        }
+        loadPlaylists()
         findViewById<View>(R.id.library_close).setOnClickListener { showLibrary(false) }
     }
 
@@ -310,6 +366,38 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             }
         }
         layoutPanels()
+        setupResize()
+    }
+
+    /** Dragging the bar under the waveforms (outside its buttons) moves the line between waveforms and panels. */
+    @SuppressLint("ClickableViewAccessibility") // a drag; the panel toggles are the accessible way to resize
+    private fun setupResize() {
+        val waveArea = findViewById<View>(R.id.waves)
+        applyWaveShare(waveArea, preferences.getFloat(PREF_WAVE_SHARE, 1f / 3f))
+        var startY = 0f
+        var startShare = 0f
+        findViewById<View>(R.id.control_bar).setOnTouchListener { _, event ->
+            val total = waveArea.height + panelArea.height
+            if (panelArea.visibility != View.VISIBLE || total <= 0) return@setOnTouchListener false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    startY = event.rawY
+                    startShare = waveArea.height.toFloat() / total
+                }
+                MotionEvent.ACTION_MOVE ->
+                    applyWaveShare(waveArea, (startShare + (event.rawY - startY) / total).coerceIn(0.15f, 0.85f))
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    preferences.edit().putFloat(PREF_WAVE_SHARE, waveShare).apply()
+            }
+            true
+        }
+    }
+
+    private fun applyWaveShare(waveArea: View, share: Float) {
+        waveShare = share
+        (waveArea.layoutParams as LinearLayout.LayoutParams).weight = share
+        (panelArea.layoutParams as LinearLayout.LayoutParams).weight = 1f - share
+        waveArea.requestLayout()
     }
 
     /** With every panel folded and the library closed, the waveforms get the whole screen. */
@@ -426,7 +514,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     /** An empty deck was tapped: open the library for it, or the folder picker on first use. */
     override fun onLoadRequest(deck: Int) {
         showLibrary(true, deck)
-        if (preferences.getString(PREF_FOLDER, null) == null) chooseFolder()
+        if (!hasMusic()) chooseFolder()
     }
 
     override fun onSync(deck: Int) {
@@ -462,8 +550,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         d.setGrid(bpm, d.positionSec, 2.0)
     }
 
-    override fun onHotCuesChanged(deck: Int) {
-        loadedTracks[deck]?.let { cache.putHotCues(it, engine.decks[deck].hotCues) }
+    override fun onCuesChanged(deck: Int) {
+        val track = loadedTracks[deck] ?: return
+        cache.putHotCues(track, engine.decks[deck].hotCues)
+        cache.putMemoryCues(track, engine.decks[deck].memoryCues)
     }
 
     private fun toggleSmartCfx() {
@@ -520,17 +610,33 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Flx4Button.LOOP_OUT -> d?.setLoopOut()
             Flx4Button.FOUR_BEAT_EXIT -> d?.fourBeatLoopOrExit()
             Flx4Button.ACTIVE_LOOP -> d?.toggleLoop()
-            Flx4Button.LOOP_HALVE -> d?.scaleLoop(0.5)
-            Flx4Button.LOOP_DOUBLE -> d?.scaleLoop(2.0)
-            Flx4Button.JUMP_BACK -> d?.beatJump(-QUICK_JUMP_BEATS)
-            Flx4Button.JUMP_FORWARD -> d?.beatJump(QUICK_JUMP_BEATS)
+            // CUE/LOOP CALL: halve / double a loop, otherwise memory cues; SHIFT deletes / saves them.
+            Flx4Button.CUE_LOOP_CALL_PREV -> d?.cueLoopCall(-1)
+            Flx4Button.CUE_LOOP_CALL_NEXT -> d?.cueLoopCall(1)
+            Flx4Button.MEMORY_DELETE -> d?.let {
+                it.deleteMemoryCue()
+                onCuesChanged(deck)
+            }
+            Flx4Button.MEMORY_SAVE -> d?.let {
+                it.saveMemoryCue()
+                onCuesChanged(deck)
+            }
             Flx4Button.PFL -> d?.let { it.cueEnabled = !it.cueEnabled }
             Flx4Button.QUANTIZE -> d?.let {
                 it.quantize = !it.quantize
                 toast("Quantize ${if (it.quantize) "on" else "off"}")
             }
-            Flx4Button.LOAD -> loadSelected(deck)
-            Flx4Button.BROWSE_PRESS -> showLibrary(!libraryVisible)
+            Flx4Button.LOAD -> {
+                // Pressed twice: instant doubles, as in rekordbox.
+                val now = SystemClock.uptimeMillis()
+                if (now - lastLoadPress[deck] < DOUBLE_PRESS_MS) instantDouble(deck) else loadSelected(deck)
+                lastLoadPress[deck] = now
+            }
+            // rekordbox for Android: SHIFT + LOAD 1 shows related tracks, SHIFT + LOAD 2 the browser.
+            Flx4Button.SHIFT_LOAD -> if (deck == 0) showRelated() else showLibrary(!libraryVisible)
+            // rekordbox: BROWSE press moves between the folders and the tracks.
+            Flx4Button.BROWSE_PRESS -> if (libraryVisible) switchBrowseList() else showLibrary(true)
+            Flx4Button.BROWSE_SHIFT_PRESS -> showLibrary(!libraryVisible)
             Flx4Button.SMART_CFX -> toggleSmartCfx()
             Flx4Button.SMART_FADER -> toast(getString(R.string.not_supported, "Smart Fader"))
             Flx4Button.MASTER_CUE -> engine.masterCue = !engine.masterCue
@@ -613,7 +719,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             return
         }
         d.padDown(mode, pad, shift)
-        if (mode == Deck.PAD_HOT_CUE) onHotCuesChanged(deck)
+        if (mode == Deck.PAD_HOT_CUE) onCuesChanged(deck)
     }
 
     override fun onBrowse(delta: Int, shift: Boolean) {
@@ -623,10 +729,23 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             if (selectedTrack >= 0) libraryList.setSelection(selectedTrack)
             return
         }
+        val step = delta * if (shift) 10 else 1
+        if (browseFolders) {
+            if (folderRows.isEmpty()) return
+            selectFolder((selectedFolder + step).coerceIn(0, folderRows.size - 1))
+            folderList.smoothScrollToPosition(selectedFolder)
+            return
+        }
         if (visibleTracks.isEmpty()) return
-        selectedTrack = (selectedTrack + delta * if (shift) 10 else 1).coerceIn(0, visibleTracks.size - 1)
+        selectedTrack = (selectedTrack + step).coerceIn(0, visibleTracks.size - 1)
         trackAdapter.notifyDataSetChanged()
         libraryList.smoothScrollToPosition(selectedTrack)
+    }
+
+    private fun switchBrowseList() {
+        browseFolders = !browseFolders
+        folderAdapter.notifyDataSetChanged()
+        trackAdapter.notifyDataSetChanged()
     }
 
     // ---------------------------------------------------------------------
@@ -664,44 +783,232 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
     }
 
+    /** Single audio files, several at once; they show under "Added tracks". */
+    private fun chooseFiles() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("audio/*")
+            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQ_FILES)
+        } catch (e: Exception) {
+            toast("No file picker available: ${e.message}")
+        }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_FOLDER || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        // Without the persisted grant the folder still works for this session.
-        runCatching {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val key = when (requestCode) {
+            REQ_FOLDER -> PREF_FOLDERS
+            REQ_FILES -> PREF_FILES
+            else -> return
         }
-        preferences.edit().putString(PREF_FOLDER, uri.toString()).apply()
-        scanFolder(uri)
+        if (resultCode != RESULT_OK || data == null) return
+        val picked = data.clipData?.let { clip -> List(clip.itemCount) { clip.getItemAt(it).uri } }
+            ?: listOfNotNull(data.data)
+        // Without the persisted grant the music still plays for this session.
+        picked.forEach {
+            runCatching { contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        preferences.edit().putStringSet(key, sources(key) + picked.map { it.toString() }).apply()
+        scanLibrary()
     }
 
-    private fun scanFolder(uri: Uri) {
+    /** Added folder trees ([PREF_FOLDERS]) or files ([PREF_FILES]), as URI strings. */
+    private fun sources(key: String): Set<String> = preferences.getStringSet(key, null) ?: emptySet()
+
+    private fun hasMusic(): Boolean = sources(PREF_FOLDERS).isNotEmpty() || sources(PREF_FILES).isNotEmpty()
+
+    /** Takes what brought [found] into the library out of it, after a confirmation; the files stay. */
+    private fun confirmRemove(name: String, found: List<Track>) {
+        val gone = found.mapNotNull { it.source?.toString() }.toSet()
+        if (gone.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle("Remove $name from the library?")
+            .setMessage("The files stay on the phone.")
+            .setPositiveButton("Remove") { _, _ ->
+                preferences.edit()
+                    .putStringSet(PREF_FOLDERS, sources(PREF_FOLDERS) - gone)
+                    .putStringSet(PREF_FILES, sources(PREF_FILES) - gone)
+                    .apply()
+                gone.forEach {
+                    runCatching { contentResolver.releasePersistableUriPermission(Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                }
+                scanLibrary()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun scanLibrary() {
         libraryInfo.text = "Scanning…"
+        val folders = sources(PREF_FOLDERS).map(Uri::parse)
+        val files = sources(PREF_FILES).map(Uri::parse)
         work.execute {
             val found = try {
-                library.scan(uri)
+                library.scan(folders, files)
             } catch (_: Exception) {
                 emptyList()
             }
-            ui.post {
-                tracks.clear()
-                tracks.addAll(found)
-                filterTracks()
-            }
+            ui.post { setLibrary(found) }
         }
+    }
+
+    /** Shows [found] as the library. */
+    internal fun setLibrary(found: List<Track>) { // internal: the UI test fills the library directly
+        tracks.clear()
+        tracks.addAll(found)
+        refreshFolders()
+    }
+
+    /** Folders, then playlists; stays on the row that was selected if it still exists. */
+    private fun refreshFolders() {
+        val kept = folderRows.getOrNull(selectedFolder)
+        val known = tracks.mapTo(HashSet()) { it.uri.toString() }
+        folderRows = Library.folderRows(tracks.map { it.folder }, "All tracks") +
+            playlists.map { (name, uris) -> FolderRow("", "♫ $name", 0, uris.count { it in known }, name) }
+        selectedFolder = folderRows.indexOfFirst { it.path == kept?.path && it.playlist == kept?.playlist }
+            .coerceAtLeast(0)
+        folderAdapter.notifyDataSetChanged()
+        filterTracks()
+    }
+
+    private fun bpmOf(track: Track): Double = cache.get(track)?.bpm ?: Double.MAX_VALUE
+
+    /** Long-press on a track: playlists, and removal for a track added on its own. */
+    private fun trackMenu(track: Track) {
+        val current = folderRows.getOrNull(selectedFolder)?.playlist
+        val actions = ArrayList<Pair<String, () -> Unit>>()
+        playlists.keys.filter { it != current }.forEach { name -> actions.add("Add to ♫ $name" to { addToPlaylist(name, track) }) }
+        actions.add("Add to a new playlist…" to { newPlaylist(track) })
+        if (current != null) {
+            actions.add("Remove from ♫ $current" to {
+                playlists[current]?.remove(track.uri.toString())
+                savePlaylists()
+            })
+        }
+        if (track.folder == Library.ADDED_FILES) actions.add("Remove from the library…" to { confirmRemove(track.name, listOf(track)) })
+        AlertDialog.Builder(this)
+            .setTitle(track.name.substringBeforeLast('.').ifBlank { track.name })
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
+            .show()
+    }
+
+    internal fun addToPlaylist(name: String, track: Track) { // internal: the UI test builds a playlist
+        val uris = playlists.getOrPut(name) { ArrayList() }
+        if (track.uri.toString() !in uris) uris.add(track.uri.toString())
+        savePlaylists()
+        toast("Added to ♫ $name")
+    }
+
+    /** Asks for a name; [track] goes in when there is one. */
+    private fun newPlaylist(track: Track?) {
+        val input = EditText(this).apply {
+            hint = "Playlist name"
+            setSingleLine()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("New playlist")
+            .setView(input)
+            .setPositiveButton("Create") { _, _ ->
+                val base = input.text.toString().trim().ifEmpty { "Playlist" }
+                var name = base
+                var n = 2
+                while (playlists.containsKey(name)) name = "$base ${n++}"
+                playlists[name] = ArrayList()
+                if (track != null) addToPlaylist(name, track) else savePlaylists()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun confirmDeletePlaylist(name: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete the playlist $name?")
+            .setMessage("Its tracks stay in the library.")
+            .setPositiveButton("Delete") { _, _ ->
+                playlists.remove(name)
+                savePlaylists()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun loadPlaylists() {
+        val json = runCatching { JSONObject(preferences.getString(PREF_PLAYLISTS, null) ?: return) }.getOrNull() ?: return
+        for (name in json.keys()) {
+            val uris = json.optJSONArray(name) ?: continue
+            playlists[name] = MutableList(uris.length()) { uris.getString(it) }
+        }
+    }
+
+    private fun savePlaylists() {
+        val json = JSONObject()
+        playlists.forEach { (name, uris) -> json.put(name, JSONArray(uris)) }
+        preferences.edit().putString(PREF_PLAYLISTS, json.toString()).apply()
+        refreshFolders()
+    }
+
+    private fun selectFolder(position: Int) {
+        if (position !in folderRows.indices) return
+        selectedFolder = position
+        folderAdapter.notifyDataSetChanged()
+        filterTracks()
     }
 
     private fun filterTracks() {
         val query = librarySearch.text.toString().trim()
-        visibleTracks = if (query.isEmpty()) tracks else tracks.filter { it.name.contains(query, ignoreCase = true) }
+        val row = folderRows.getOrNull(selectedFolder)
+        val list = row?.playlist?.let { name ->
+            val byUri = tracks.associateBy { it.uri.toString() }
+            playlists[name].orEmpty().mapNotNull { byUri[it] } // in play order
+        } ?: tracks.filter { Library.inFolder(it.folder, row?.path.orEmpty()) }
+        visibleTracks = list.filter { query.isEmpty() || it.name.contains(query, ignoreCase = true) }
+        if (sortByBpm) visibleTracks = visibleTracks.sortedBy(::bpmOf) // unanalysed tracks last
+        if (sortByBpm) sortButton.tint(getColor(R.color.accent), getColor(R.color.on_accent))
+        else sortButton.tint(getColor(R.color.panel_alt), getColor(R.color.text))
         selectedTrack = if (visibleTracks.isEmpty()) -1 else 0
         trackAdapter.notifyDataSetChanged()
+        libraryEmpty.visibility = if (tracks.isEmpty()) View.VISIBLE else View.GONE
         libraryInfo.text = when {
-            tracks.isEmpty() -> "No audio files — choose a folder"
-            query.isEmpty() -> "${tracks.size} tracks"
+            tracks.isEmpty() -> "No music yet"
+            visibleTracks.size == tracks.size -> "${tracks.size} tracks"
             else -> "${visibleTracks.size} of ${tracks.size}"
+        }
+    }
+
+    /**
+     * LOAD pressed twice: the other deck's track, playing along with it from the
+     * same place at the same speed (rekordbox instant doubles).
+     */
+    private fun instantDouble(index: Int) {
+        val other = engine.decks[1 - index]
+        val track = loadedTracks[1 - index]
+        if (track == null) return toast("Deck ${DECK_NAMES[1 - index]} has no track to double")
+        if (engine.decks[index].playing) return toast("Deck ${DECK_NAMES[index]} is playing: pause it to load another track")
+        showLibrary(false)
+        loadTrack(index, track) { deck ->
+            deck.playAlong(other)
+            // shortcut: one realignment once the decoder has caught up; a decoded buffer shared by both decks would make it exact.
+            ui.postDelayed({ if (loadedTracks[index] === track && deck.playing && other.playing) deck.playAlong(other) }, REALIGN_MS)
+        }
+    }
+
+    /** SHIFT + LOAD 1: the library sorted by BPM, at the tempo of the master deck (a simple "related tracks"). */
+    private fun showRelated() {
+        sortByBpm = true
+        showLibrary(true)
+        filterTracks()
+        val bpm = engine.decks[engine.masterDeckIndex].effectiveBpm()
+        val near = visibleTracks.indexOfFirst { bpmOf(it) >= bpm }
+        if (bpm > 0.0 && visibleTracks.isNotEmpty()) {
+            selectedTrack = if (near >= 0) near else visibleTracks.lastIndex
+            browseFolders = false
+            trackAdapter.notifyDataSetChanged()
+            libraryList.setSelection(selectedTrack)
         }
     }
 
@@ -711,7 +1018,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         if (!libraryVisible || track == null) showLibrary(true, deck) else loadFromRow(deck, track)
     }
 
-    private fun loadTrack(index: Int, track: Track) {
+    private fun loadTrack(index: Int, track: Track, onLoaded: (Deck) -> Unit = {}) {
         val token = loadTokens.incrementAndGet(index)
         val deck = engine.decks[index]
         val panel = panels[index]
@@ -744,9 +1051,11 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                     }
                     deck.load(source, title, artist, source.durationSec)
                     deck.setHotCues(cache.hotCues(track))
+                    deck.setMemoryCues(cache.memoryCues(track))
                     source.start()
                     loadedTracks[index] = track
                     panel.message = null
+                    onLoaded(deck)
                 }
                 TrackAnalyzer.analyze(
                     this, track, cache, stale,
@@ -780,7 +1089,38 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             )
             view.findViewById<View>(R.id.row_load_a).setOnClickListener { loadFromRow(0, track) }
             view.findViewById<View>(R.id.row_load_b).setOnClickListener { loadFromRow(1, track) }
-            view.setBackgroundColor(getColor(if (position == selectedTrack) R.color.panel_alt else R.color.bg))
+            // The row under the cursor stands out while BROWSE moves in the tracks.
+            val cursor = when {
+                position != selectedTrack -> R.color.bg
+                browseFolders -> R.color.panel
+                else -> R.color.panel_alt
+            }
+            view.setBackgroundColor(getColor(cursor))
+            return view
+        }
+    }
+
+    /** Folder column: indented like a tree, the selected folder in amber. */
+    private inner class FolderAdapter : BaseAdapter() {
+        override fun getCount(): Int = folderRows.size
+        override fun getItem(position: Int): Any = folderRows[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val density = resources.displayMetrics.density
+            val view = convertView as? TextView ?: TextView(this@MainActivity).apply {
+                textSize = 13f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_VERTICAL
+                minHeight = (44 * density).toInt()
+            }
+            val row = folderRows[position]
+            val selected = position == selectedFolder
+            view.setPadding(((10 + 14 * row.depth) * density).toInt(), 0, (8 * density).toInt(), 0)
+            view.text = "${row.label}   ${row.count}"
+            view.setTextColor(getColor(if (selected) R.color.accent else R.color.text))
+            view.setBackgroundColor(getColor(if (selected && browseFolders) R.color.panel_alt else R.color.bg))
             return view
         }
     }
@@ -856,12 +1196,20 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     private companion object {
         const val REQ_FOLDER = 41
+        const val REQ_FILES = 42
         const val PREFS = "flx4-preferences"
-        const val PREF_FOLDER = "folder"
+        const val PREF_FOLDER = "folder" // up to 0.4: the one music folder
+        const val PREF_FOLDERS = "folders"
+        const val PREF_FILES = "files"
+        const val PREF_PLAYLISTS = "playlists"
+        const val PREF_WAVE_SHARE = "wave_share"
         const val PREF_SPLIT = "split_cue"
         const val PREF_ZOOM = "zoom"
         val PANEL_PREFS = arrayOf("panel_deck_a", "panel_mixer", "panel_deck_b")
-        const val QUICK_JUMP_BEATS = 16.0
+
+        /** Two LOAD presses closer than this are a double press (instant doubles). */
+        const val DOUBLE_PRESS_MS = 400L
+        const val REALIGN_MS = 700L
 
         /** Tempo fader distance (1 % of its travel) at which it takes over. */
         const val TAKEOVER = 0.02

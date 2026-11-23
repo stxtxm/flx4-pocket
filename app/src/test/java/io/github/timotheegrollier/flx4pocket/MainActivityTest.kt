@@ -105,6 +105,10 @@ class MainActivityTest {
         loadDemoTrack(activity.engine.decks[0], "Night Drive", "Demo Artist", bpm = 124.0, at = 31.3)
         loadDemoTrack(activity.engine.decks[1], "Second Track", "", bpm = 126.0, at = 12.0)
         activity.engine.decks[0].padDown(Deck.PAD_HOT_CUE, 0)
+        activity.engine.decks[0].seekTo(29.5)
+        activity.engine.decks[0].cueDown() // a cue point here, saved as a memory cue
+        activity.engine.decks[0].cueUp()
+        activity.engine.decks[0].saveMemoryCue()
         activity.engine.decks[0].seekTo(33.0)
         activity.engine.decks[0].padDown(Deck.PAD_HOT_CUE, 3)
         activity.engine.decks[0].toggleBeatLoop(4.0)
@@ -117,6 +121,20 @@ class MainActivityTest {
             activity.findViewById<View>(id).performClick()
         }
         screenshot(activity, "waveforms.png")
+
+        fun track(name: String, folder: String) = Track(Uri.parse("content://demo/$name"), name, 0L, folder)
+        activity.setLibrary(
+            listOf(
+                track("Night Drive.mp3", "Music/House"), track("Second Track.flac", "Music/House"),
+                track("Deep Water.mp3", "Music/House/Deep"), track("Warehouse.mp3", "Music/Techno"),
+                track("Acid Rain.wav", "Music/Techno"), track("Vocal Hook.mp3", Library.ADDED_FILES)
+            )
+        )
+        activity.addToPlaylist("Warm-up", track("Deep Water.mp3", "Music/House/Deep"))
+        activity.onBrowse(1, shift = false) // the first click opens the library
+        activity.onButton(-1, Flx4Button.BROWSE_PRESS, true)
+        activity.onBrowse(3, shift = false)
+        screenshot(activity, "library.png")
     }
 
     /** Lays the screen out at the configured size and writes it to build/screenshots. */
@@ -292,6 +310,85 @@ class MainActivityTest {
         refresh(activity)
         assertEquals(1.02, deck.tempoRate, 1e-3)
         assertEquals("+2.0%", pitch.text.toString())
+    }
+
+    @Test
+    fun `the controller browses folders then tracks, as in rekordbox`() {
+        val activity = launch().get()
+        fun track(name: String, folder: String) = Track(Uri.parse("content://test/$name"), name, 0L, folder)
+        activity.setLibrary(
+            listOf(
+                track("a.mp3", "Music/House"), track("b.mp3", "Music/Techno"),
+                track("c.mp3", "Music/House"), track("d.mp3", Library.ADDED_FILES)
+            )
+        )
+        val tracks = activity.findViewById<android.widget.ListView>(R.id.library_list)
+        assertEquals(4, tracks.adapter.count)
+
+        activity.onButton(-1, Flx4Button.BROWSE_PRESS, true) // to the folders
+        activity.onBrowse(3, shift = false) // All, Added tracks, Music, Music/House
+        assertEquals("only the House tracks", 2, tracks.adapter.count)
+        activity.onButton(-1, Flx4Button.BROWSE_PRESS, true) // back to the tracks
+        activity.onBrowse(1, shift = false)
+        assertEquals("c.mp3", (tracks.adapter.getItem(1) as Track).name)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.library_panel).visibility)
+
+        activity.onButton(-1, Flx4Button.BROWSE_SHIFT_PRESS, true) // closes the library
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.library_panel).visibility)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.library_empty).visibility)
+    }
+
+    @Test
+    fun `playlists keep their order and the BPM sort orders the rest`() {
+        val activity = launch().get()
+        val cache = AnalysisCache(activity)
+        fun track(name: String, bpm: Double) = Track(Uri.parse("content://test/$name"), name, 0L, "Music").also {
+            cache.put(it, BpmAnalyzer.Result(bpm, 0.0, 2.0, 180.0))
+        }
+        val slow = track("slow.mp3", 100.0)
+        val fast = track("fast.mp3", 140.0)
+        val mid = track("mid.mp3", 124.0)
+        activity.setLibrary(listOf(fast, mid, slow))
+        val list = activity.findViewById<android.widget.ListView>(R.id.library_list)
+        fun names() = (0 until list.adapter.count).map { (list.adapter.getItem(it) as Track).name }
+
+        activity.findViewById<View>(R.id.library_sort).performClick()
+        assertEquals(listOf("slow.mp3", "mid.mp3", "fast.mp3"), names())
+        activity.findViewById<View>(R.id.library_sort).performClick()
+
+        activity.addToPlaylist("Warm-up", mid)
+        activity.addToPlaylist("Warm-up", slow)
+        activity.onButton(-1, Flx4Button.BROWSE_PRESS, true) // to the folders: All, Music, ♫ Warm-up
+        activity.onBrowse(2, shift = false)
+        assertEquals("in the order they were added", listOf("mid.mp3", "slow.mp3"), names())
+
+        controller?.pause()?.stop()?.destroy()
+        val again = launch().get() // playlists are kept
+        again.setLibrary(listOf(fast, mid, slow))
+        again.onButton(-1, Flx4Button.BROWSE_PRESS, true)
+        again.onBrowse(2, shift = false)
+        val list2 = again.findViewById<android.widget.ListView>(R.id.library_list)
+        assertEquals(2, list2.adapter.count)
+    }
+
+    @Test
+    fun `dragging the bar under the waveforms resizes them`() {
+        val activity = launch().get()
+        activity.onBackPressed() // closes the first-run library
+        screenshot(activity, "resize.png") // lays the screen out
+        val bar = activity.findViewById<View>(R.id.control_bar)
+        val waves = activity.findViewById<View>(R.id.waves)
+        val before = waves.height
+        fun drag(action: Int, y: Float) {
+            val event = MotionEvent.obtain(0, 0, action, bar.width / 2f, y, 0)
+            bar.dispatchTouchEvent(event)
+            event.recycle()
+        }
+        drag(MotionEvent.ACTION_DOWN, 10f)
+        drag(MotionEvent.ACTION_MOVE, 110f)
+        drag(MotionEvent.ACTION_UP, 110f)
+        screenshot(activity, "resize.png")
+        assertEquals(before + 100f, waves.height.toFloat(), 3f)
     }
 
     @Test

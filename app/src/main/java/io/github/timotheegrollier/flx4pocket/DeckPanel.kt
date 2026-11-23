@@ -26,7 +26,8 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         fun onSync(deck: Int)
         fun onMaster(deck: Int)
         fun onTap(deck: Int)
-        fun onHotCuesChanged(deck: Int)
+        /** Hot cues or memory cues changed: save them with the track. */
+        fun onCuesChanged(deck: Int)
 
         /** The empty deck was tapped. */
         fun onLoadRequest(deck: Int)
@@ -52,6 +53,8 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
     private val loopIn: TextView
     private val loopOut: TextView
     private val reloop: TextView
+    private val half: TextView
+    private val double: TextView
     private val quantize: TextView
     private val cue: TextView
     private val play: TextView
@@ -88,6 +91,8 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         loopIn = findViewById(R.id.deck_loop_in)
         loopOut = findViewById(R.id.deck_loop_out)
         reloop = findViewById(R.id.deck_reloop)
+        half = findViewById(R.id.deck_loop_half)
+        double = findViewById(R.id.deck_loop_double)
         quantize = findViewById(R.id.deck_quantize)
         cue = findViewById(R.id.deck_cue)
         play = findViewById(R.id.deck_play)
@@ -158,8 +163,9 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         loopIn.onPress { deck.setLoopIn() }
         loopOut.onPress { deck.setLoopOut() }
         reloop.onPress { deck.fourBeatLoopOrExit() }
-        findViewById<View>(R.id.deck_loop_half).onPress { deck.scaleLoop(0.5) }
-        findViewById<View>(R.id.deck_loop_double).onPress { deck.scaleLoop(2.0) }
+        // CUE/LOOP CALL ◁ ▷, as on the FLX4: halve / double a loop, otherwise call memory cues.
+        half.onPress { deck.cueLoopCall(-1) }
+        double.onPress { deck.cueLoopCall(1) }
         quantize.setOnClickListener { deck.quantize = !deck.quantize }
         findViewById<View>(R.id.deck_tap).onPress { host.onTap(index) }
 
@@ -196,7 +202,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
 
     private val deleteHotCue = Runnable {
         deck.padDown(Deck.PAD_HOT_CUE, heldPad, shift = true)
-        host.onHotCuesChanged(deck.index)
+        host.onCuesChanged(deck.index)
     }
     private var heldPad = -1
 
@@ -207,7 +213,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
             down = {
                 val existed = mode == Deck.PAD_HOT_CUE && deck.hotCues[pad] != null
                 deck.padDown(mode, pad)
-                if (mode == Deck.PAD_HOT_CUE) host.onHotCuesChanged(deck.index)
+                if (mode == Deck.PAD_HOT_CUE) host.onCuesChanged(deck.index)
                 if (existed) {
                     // Keep holding an existing hot cue to delete it.
                     heldPad = pad
@@ -287,6 +293,9 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         style(loopIn, if (deck.loopAdjust == Deck.ADJUST_IN) blink else deck.loopInSec >= 0.0)
         style(loopOut, if (deck.loopAdjust == Deck.ADJUST_OUT) blink else deck.loopActive)
         reloop.show(if (deck.loopActive) "EXIT" else "4 BEAT")
+        val memory = !deck.loopActive && deck.memoryCues.isNotEmpty()
+        half.show(if (memory) "◄ MEM" else "½")
+        double.show(if (memory) "MEM ►" else "2×")
         style(reloop, deck.loopActive)
         style(quantize, deck.quantize)
 

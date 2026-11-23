@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0
+
+A library you can fill and browse from the phone and from the FLX4.
+
+### Added
+
+- **+ FOLDER** adds a music folder with its subfolders, as many as you like
+  (it used to replace the one folder); **+ TRACKS** adds single audio files,
+  several at once, shown under "Added tracks".
+- A folder column next to the track list: every folder as a tree with its
+  track count; a folder shows its tracks and those of its subfolders, and the
+  search works inside it.
+- Long-press a top folder or an added track to take it out of the library,
+  after a confirmation; the files stay on the phone.
+- With nothing added yet, the track list explains how to add music.
+- Playlists: + PLAYLIST creates one, a long-press on a track adds it (or
+  removes it from the playlist shown); they keep their order, show in the
+  folder column and are browsed like folders. Long-press deletes one.
+- BPM ↑ sorts the tracks by tempo (unanalysed ones last).
+- Memory cues, mapped as in rekordbox: SHIFT + CUE/LOOP CALL ► saves the cue
+  point or the loop playing, CUE/LOOP CALL ◄ ► call them in track order (a
+  memory loop plays), SHIFT + ◄ deletes the one called. Red marks on the
+  waveform and the overview; saved with the track. On screen, ½ / 2× call
+  them when no loop plays.
+- Instant doubles: LOAD pressed twice loads the other deck's track at the
+  same place, speed and keylock, playing if it plays, and realigns once the
+  audio is decoded.
+- SHIFT + LOAD 1 opens the library sorted by BPM on the master deck's tempo;
+  SHIFT + LOAD 2 opens and closes it (rekordbox for Android).
+- Drag the bar under the waveforms to resize them against the panels; kept.
+
+### Changed
+
+- FLX4 browser as in rekordbox: BROWSE press moves the cursor between the
+  folders and the tracks, BROWSE turn moves in the one that has it; SHIFT +
+  BROWSE press opens and closes the library (BROWSE press used to).
+- The folder from 0.4 and earlier becomes the first folder of the library.
+- SHIFT + CUE/LOOP CALL ◄ ► no longer jump 16 beats: they delete and save
+  memory cues, as in rekordbox. Beat jumps stay on the BEAT JUMP pads.
+
+### Fixed
+
+- With KEY, a loop kept playing past its end for up to 70 ms at each seam (a
+  grain ran on) and clicked where a grain read across the end; the seam now
+  starts a new grain at the loop start, crossfaded.
+
 ## 0.4.0
 
 Waveforms first, loops that stay on the beat, and a shorter delay between a

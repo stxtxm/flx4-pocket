@@ -12,14 +12,15 @@ All tests run on the JVM; no device or emulator is needed.
 | Test class | Covers |
 | --- | --- |
 | `Flx4DecoderTest` | The FLX4 address table: every mapped button, knob, jog mode and pad range, running status, 14-bit pairs per deck, relative encoders, repeated positions reported once |
-| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, loops that keep the beat (late OUT, early 4 BEAT, 1/4-beat loops, halving under the playhead), click-free loop seams, loop point adjust with the jog, hot cues, beat jump, slip roll, pad FX, scratch, bend, sync (also when the master's tempo moves), keylock pitch and tempo, click-free jumps, Smart CFX |
+| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, loops that keep the beat (late OUT, early 4 BEAT, 1/4-beat loops, halving under the playhead), click-free loop seams (also with KEY, which must restart at the loop start at once), loop point adjust with the jog, memory cues, instant doubles, hot cues, beat jump, slip roll, pad FX, scratch, bend, sync (also when the master's tempo moves), keylock pitch and tempo, click-free jumps, Smart CFX |
 | `TrackBufferTest` | Whole-track buffer: decoded frames read back, undecoded ones wait, capacity |
 | `FxTest` | Bypass when off, echo timing and tail, trans gating, stability of every effect |
+| `LibraryTest` | Folder column order (parents before children, lookalike names apart), counts, which tracks a folder holds |
 | `WaveformTest` | Resolution, band separation, overflow, cache-file round trip |
 | `PcmRingTest` | Cubic interpolation accuracy, seek reset, eviction over many capacities, decoder throttling |
 | `DspTest` | Biquads, mixer curves, EQ range, master limiter, soft clip |
 | `BpmAnalyzerTest`, `BeatGridTest` | Tempo estimation and beat math |
-| `MainActivityTest` (Robolectric) | The real layouts inflate, the activity runs its lifecycle, touch controls and controller events reach the engine, an empty deck opens the library for itself, waveforms cannot grab a track while the library is open, panels fold away (the library still opens, the choice is remembered), tempo fader soft takeover, load lock, KEY |
+| `MainActivityTest` (Robolectric) | The real layouts inflate, the activity runs its lifecycle, touch controls and controller events reach the engine, an empty deck opens the library for itself, waveforms cannot grab a track while the library is open, panels fold away (the library still opens, the choice is remembered), tempo fader soft takeover, load lock, KEY, the controller browsing folders then tracks, playlists (order, kept across launches), BPM sort, resizing the waveforms by dragging |
 
 `MainActivityTest` also writes `app/build/screenshots/main.png` (the mixing
 screen with two synthetic tracks) and `waveforms.png` (every panel folded).
@@ -83,7 +84,20 @@ USB audio
 
 App
 
-24. First-run folder picker, and the folder still readable after a reboot.
+24. First-run folder picker, and the folders still readable after a reboot.
+    + FOLDER twice and + TRACKS (several files): everything shows, in the
+    folder column as a tree with counts; long-press removes a top folder or an
+    added track after a confirmation. With the FLX4: BROWSE press moves
+    between folders and tracks, BROWSE turn moves in the one with the cursor,
+    SHIFT + BROWSE press closes the library. BPM ↑ sorts by tempo; SHIFT +
+    LOAD 1 opens it on the master's tempo. A playlist made with + PLAYLIST and
+    long-presses keeps its order after a restart.
+29. Memory cues: SHIFT + CUE/LOOP CALL ► saves the cue point and a playing
+    loop; ◄ ► call them (a red mark on the waveform each), SHIFT + ◄ deletes
+    the one called; they come back with the track.
+30. LOAD twice on a deck: the other deck's track plays along at the same
+    place and speed, and stays together after a second.
+31. Dragging the bar under the waveforms resizes them, and the size is kept.
 25. Tapping an empty deck opens the library for it (the folder picker on first
     use); tapping a track loads it there.
 26. Loading onto a playing deck is refused with a message.

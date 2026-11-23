@@ -9,24 +9,70 @@ import java.util.UUID
 data class Track(
     val uri: Uri,
     val name: String,
-    val lastModified: Long
+    val lastModified: Long,
+    /** Where it was found: "Music/House" under an added folder, or [Library.ADDED_FILES]. */
+    val folder: String = "",
+    /** The added folder tree, or the added file itself, that brought it into the library. */
+    val source: Uri? = null
 )
 
 /**
- * Reads a music folder through the Storage Access Framework so the app needs no
- * storage permission and works the same on a Pixel 9a and on older devices.
+ * A row of the folder column: [path] selects the tracks under it ("" = all), [depth]
+ * indents it; a [playlist] row shows that playlist instead.
+ */
+data class FolderRow(val path: String, val label: String, val depth: Int, val count: Int, val playlist: String? = null)
+
+/**
+ * Reads music folders and single files through the Storage Access Framework,
+ * so the app needs no storage permission and works the same on a Pixel 9a and
+ * on older devices.
  */
 class Library(private val context: Context) {
 
-    fun scan(treeUri: Uri, limit: Int = 3000): List<Track> {
+    /** Tracks of every folder tree in [folders] and every file in [files], sorted by name. */
+    fun scan(folders: Collection<Uri>, files: Collection<Uri>): List<Track> {
         val result = ArrayList<Track>()
-        val queue = ArrayDeque<String>()
-        val root = try {
-            DocumentsContract.getTreeDocumentId(treeUri)
-        } catch (e: Exception) {
-            return result
+        val roots = HashSet<String>()
+        for (tree in folders) {
+            var root = rootName(tree)
+            // Two added folders with the same name stay apart in the folder column.
+            var n = 2
+            while (!roots.add(root)) root = "${rootName(tree)} ${n++}"
+            scanTree(tree, root, result)
         }
-        queue.add(root)
+        for (file in files) {
+            try {
+                context.contentResolver.query(file, FILE_COLUMNS, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0) ?: "Track"
+                        val modified = if (cursor.isNull(1)) 0L else cursor.getLong(1)
+                        result.add(Track(file, name, modified, ADDED_FILES, file))
+                    }
+                }
+            } catch (_: Exception) {
+                // Deleted or no longer readable: it just drops out of the list.
+            }
+        }
+        return result.sortedBy { it.name.lowercase() }
+    }
+
+    private fun rootName(tree: Uri): String = try {
+        val id = DocumentsContract.getTreeDocumentId(tree)
+        context.contentResolver.query(
+            DocumentsContract.buildDocumentUriUsingTree(tree, id), FILE_COLUMNS, null, null, null
+        )?.use { if (it.moveToFirst()) it.getString(0) else null } ?: id.substringAfterLast(':')
+    } catch (_: Exception) {
+        "Music"
+    }
+
+    private fun scanTree(treeUri: Uri, root: String, result: MutableList<Track>, limit: Int = 3000) {
+        val queue = ArrayDeque<Pair<String, String>>() // document id, folder path
+        val start = result.size
+        try {
+            queue.add(DocumentsContract.getTreeDocumentId(treeUri) to root)
+        } catch (e: Exception) {
+            return
+        }
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -34,8 +80,8 @@ class Library(private val context: Context) {
             DocumentsContract.Document.COLUMN_LAST_MODIFIED
         )
 
-        while (queue.isNotEmpty() && result.size < limit) {
-            val documentId = queue.removeFirst()
+        while (queue.isNotEmpty() && result.size - start < limit) {
+            val (documentId, path) = queue.removeFirst()
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
                 treeUri,
                 documentId
@@ -54,28 +100,24 @@ class Library(private val context: Context) {
                     val modifiedIndex = cursor.getColumnIndex(
                         DocumentsContract.Document.COLUMN_LAST_MODIFIED
                     )
-                    while (cursor.moveToNext() && result.size < limit) {
+                    while (cursor.moveToNext() && result.size - start < limit) {
                         val id = cursor.getString(idIndex) ?: continue
                         val name = cursor.getString(nameIndex) ?: "Track"
                         val mime = cursor.getString(mimeIndex) ?: ""
                         if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                            queue.add(id)
+                            queue.add(id to "$path/$name")
                             continue
                         }
                         if (!isAudio(name, mime)) continue
                         val modified = if (modifiedIndex >= 0) cursor.getLong(modifiedIndex) else 0L
                         val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
-                        result.add(Track(uri, name, modified))
+                        result.add(Track(uri, name, modified, path, treeUri))
                     }
                 }
             } catch (e: Exception) {
                 // A provider can reject a subtree; keep the rest of the scan.
             }
         }
-
-        return result.sortedWith(
-            compareBy<Track> { it.name.lowercase() }
-        )
     }
 
     private fun isAudio(name: String, mime: String): Boolean {
@@ -85,9 +127,49 @@ class Library(private val context: Context) {
     }
 
     companion object {
+        /** Folder of the tracks added one by one. */
+        const val ADDED_FILES = "Added tracks"
+
+        private val FILE_COLUMNS = arrayOf(
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED
+        )
         private val AUDIO_EXTENSIONS = setOf(
             "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "aiff", "aif", "wma"
         )
+
+        /**
+         * The folder column: "all" first, then every folder holding tracks and its
+         * parents, in tree order, each with the number of tracks under it.
+         */
+        fun folderRows(trackFolders: List<String>, allLabel: String): List<FolderRow> {
+            val counts = java.util.TreeMap<String, Int>(TREE_ORDER)
+            for (folder in trackFolders) {
+                var path = folder
+                while (path.isNotEmpty()) {
+                    counts[path] = (counts[path] ?: 0) + 1
+                    path = path.substringBeforeLast('/', "")
+                }
+            }
+            return listOf(FolderRow("", allLabel, 0, trackFolders.size)) + counts.map { (path, count) ->
+                FolderRow(path, path.substringAfterLast('/'), path.count { it == '/' }, count)
+            }
+        }
+
+        /** True when a track in [folder] belongs under the folder row [path]. */
+        fun inFolder(folder: String, path: String): Boolean =
+            path.isEmpty() || folder == path || folder.startsWith("$path/")
+
+        /** Parents before children, siblings alphabetically (ignoring case). */
+        private val TREE_ORDER = Comparator<String> { a, b ->
+            val x = a.split('/')
+            val y = b.split('/')
+            for (i in 0 until minOf(x.size, y.size)) {
+                val c = x[i].compareTo(y[i], ignoreCase = true).takeIf { it != 0 } ?: x[i].compareTo(y[i])
+                if (c != 0) return@Comparator c
+            }
+            x.size - y.size
+        }
     }
 }
 
@@ -133,6 +215,20 @@ class AnalysisCache(context: Context) {
     fun putHotCues(track: Track, cues: Array<Double?>) {
         preferences.edit()
             .putString(key(track) + "|cues", cues.joinToString(";") { it?.toString().orEmpty() })
+            .apply()
+    }
+
+    /** Memory cues as "in:out" pairs, out < 0 for a point. */
+    fun memoryCues(track: Track): List<Deck.MemoryCue> =
+        preferences.getString(key(track) + "|memory", null).orEmpty().split(';').mapNotNull { pair ->
+            val parts = pair.split(':')
+            val start = parts.getOrNull(0)?.toDoubleOrNull() ?: return@mapNotNull null
+            Deck.MemoryCue(start, parts.getOrNull(1)?.toDoubleOrNull() ?: -1.0)
+        }
+
+    fun putMemoryCues(track: Track, cues: List<Deck.MemoryCue>) {
+        preferences.edit()
+            .putString(key(track) + "|memory", cues.joinToString(";") { "${it.inSec}:${it.outSec}" })
             .apply()
     }
 

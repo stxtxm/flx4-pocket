@@ -118,6 +118,12 @@ class Deck(val index: Int) {
     var hotCues: Array<Double?> = arrayOfNulls(8)
         private set
 
+    /** rekordbox memory cues, in track order: points and loops called with CUE/LOOP CALL. */
+    @Volatile
+    var memoryCues: List<MemoryCue> = emptyList()
+        private set
+    private var calledMemory: MemoryCue? = null
+
     /** Pad currently held in a Pad FX mode, or -1. */
     @Volatile
     var heldFxPad: Int = -1
@@ -149,9 +155,6 @@ class Deck(val index: Int) {
     private var tailPos = 0.0 // next frame of the audio fading out (old grain, or before a jump)
     private var tailLeft = 0
     private var tailLength = 1
-    private var tailFolds = true // keylock grains wrap with the loop; a fading jump or seam plays on past its end
-    private var foldStart = 0.0 // the loop or roll a read wraps around
-    private var foldLength = 0.0
     private val reference = FloatArray(GRAIN_OVERLAP)
     private val candidates = FloatArray(2 * GRAIN_SEEK + GRAIN_OVERLAP)
 
@@ -211,6 +214,8 @@ class Deck(val index: Int) {
         grid = BeatGrid()
         gridConfidence = 0.0
         hotCues = arrayOfNulls(8)
+        memoryCues = emptyList()
+        calledMemory = null
         cuePointSec = 0.0
         loopInSec = -1.0
         loopOutSec = -1.0
@@ -473,6 +478,62 @@ class Deck(val index: Int) {
         setLoop(start, start + length)
     }
 
+    /**
+     * CUE/LOOP CALL ◁ ▷: during a loop, halves or doubles it; otherwise calls the
+     * previous or next memory cue: a point becomes the cue point, a loop plays.
+     */
+    @Synchronized
+    fun cueLoopCall(direction: Int) {
+        if (loopActive) return scaleLoop(if (direction < 0) 0.5 else 2.0)
+        val here = positionSec
+        val cue = if (direction < 0) {
+            memoryCues.lastOrNull { it.inSec < here - CALL_TOLERANCE }
+        } else {
+            memoryCues.firstOrNull { it.inSec > here + CALL_TOLERANCE }
+        } ?: return
+        calledMemory = cue
+        cuePointSec = cue.inSec
+        seekToInternal(cue.inSec)
+        if (cue.isLoop) setLoop(cue.inSec, cue.outSec)
+    }
+
+    /** SHIFT + CUE/LOOP CALL ▷: saves the loop playing, or else the cue point, as a memory cue. */
+    @Synchronized
+    fun saveMemoryCue() {
+        if (source == null) return
+        val cue = if (loopActive) MemoryCue(loopInSec, loopOutSec) else MemoryCue(cuePointSec)
+        if (memoryCues.any { abs(it.inSec - cue.inSec) < 0.01 && it.isLoop == cue.isLoop }) return
+        memoryCues = (memoryCues + cue).sortedBy { it.inSec }
+        calledMemory = cue
+    }
+
+    /** SHIFT + CUE/LOOP CALL ◁: deletes the memory cue called last, or the one at the playhead. */
+    @Synchronized
+    fun deleteMemoryCue() {
+        val cue = calledMemory?.takeIf { it in memoryCues }
+            ?: memoryCues.firstOrNull { abs(it.inSec - positionSec) < CALL_TOLERANCE }
+            ?: return
+        memoryCues = memoryCues - cue
+        calledMemory = null
+    }
+
+    /** Restores saved memory cues after a track load. */
+    @Synchronized
+    fun setMemoryCues(cues: List<MemoryCue>) {
+        memoryCues = cues.sortedBy { it.inSec }
+        calledMemory = null
+    }
+
+    /** Instant doubles: plays along with [other], which has the same track, at its speed and position. */
+    @Synchronized
+    fun playAlong(other: Deck) {
+        keyLock = other.keyLock
+        tempoRange = other.tempoRange
+        setTempoNormalized((other.tempoRate * other.syncFactor - 1.0) / tempoRange)
+        seekToInternal(other.positionSec)
+        playing = other.playing
+    }
+
     /** Halves ([factor] 0.5) or doubles (2.0) the active loop. */
     @Synchronized
     fun scaleLoop(factor: Double) {
@@ -637,8 +698,6 @@ class Deck(val index: Int) {
         val wrapStart = if (rolling) rollStart else loopInSec * rate
         val wrapLength = if (rolling) rollLength else (loopOutSec - loopInSec) * rate
         val durationFrames = durationSec * rate
-        foldStart = wrapStart
-        foldLength = if (wrap) wrapLength else 0.0
 
         // Keylock: grains read at the track's own pitch while the playhead moves at `step`.
         val stretch = keyLock && playing && !scratching
@@ -657,13 +716,14 @@ class Deck(val index: Int) {
         var i = 0
         while (i < frames) {
             if (wrap && wrapLength > 1.0 && cursor >= wrapStart + wrapLength) {
-                // Seamless: what follows the loop end fades out while the loop start fades in.
-                if (!stretching) startTail(cursor, JUMP_FADE, folds = false)
+                // Seamless: what follows the loop end fades out while the loop start fades
+                // in; with KEY, through a grain started right here.
+                if (stretching) grainLeft = 0 else startTail(cursor, JUMP_FADE)
                 cursor = wrapStart + (cursor - wrapStart) % wrapLength
                 if (!src.hasFrame(cursor)) src.seek(cursor / rate)
             }
             if (stretching && grainLeft <= 0) startGrain(src, ratio)
-            if (!src.sampleFrame(if (stretching) fold(grainPos) else cursor, sample)) {
+            if (!src.sampleFrame(if (stretching) grainPos else cursor, sample)) {
                 // Not decoded yet: output silence and hold the position.
                 outL[i] = 0f
                 outR[i] = 0f
@@ -684,7 +744,7 @@ class Deck(val index: Int) {
             if (tailLeft > 0) {
                 // Crossfade from the audio fading out: the previous grain, or where a jump left.
                 val w = tailLeft.toDouble() / tailLength
-                val heard = src.sampleFrame(if (tailFolds) fold(tailPos) else tailPos, sample)
+                val heard = src.sampleFrame(tailPos, sample)
                 l = l * (1.0 - w) + if (heard) sample[0] * w else 0.0
                 r = r * (1.0 - w) + if (heard) sample[1] * w else 0.0
                 tailPos += ratio
@@ -739,7 +799,7 @@ class Deck(val index: Int) {
         if (playing || scratching) {
             // Fade the old position out over a few ms rather than cutting it. A grain
             // already fading out finishes first, then the next grain starts at the target.
-            if (stretching) grainLeft = min(grainLeft, tailLeft) else startTail(cursor, JUMP_FADE, folds = false)
+            if (stretching) grainLeft = min(grainLeft, tailLeft) else startTail(cursor, JUMP_FADE)
         }
         cursor = clamped * src.sampleRate
         positionSec = clamped
@@ -747,16 +807,11 @@ class Deck(val index: Int) {
         if (!src.hasFrame(cursor)) src.seek(clamped)
     }
 
-    private fun startTail(position: Double, length: Int, folds: Boolean = true) {
+    private fun startTail(position: Double, length: Int) {
         tailPos = position
         tailLeft = length
         tailLength = length
-        tailFolds = folds
     }
-
-    /** Reads that run past the end of the active loop or roll continue from its start. */
-    private fun fold(position: Double): Double =
-        if (foldLength > 1.0 && position >= foldStart + foldLength) foldStart + (position - foldStart) % foldLength else position
 
     /**
      * Keylock (WSOLA): the grain that played so far fades out while the next one
@@ -798,7 +853,7 @@ class Deck(val index: Int) {
     }
 
     private fun mono(src: PcmSource, position: Double): Float =
-        if (src.sampleFrame(fold(position), sample)) (sample[0] + sample[1]) * 0.5f else 0f
+        if (src.sampleFrame(position, sample)) (sample[0] + sample[1]) * 0.5f else 0f
 
     private fun resetFilters() {
         lowL.reset(); lowR.reset()
@@ -852,6 +907,11 @@ class Deck(val index: Int) {
         }
     }
 
+    /** A saved cue point, or a loop when [outSec] is after [inSec] (rekordbox memory cue). */
+    data class MemoryCue(val inSec: Double, val outSec: Double = -1.0) {
+        val isLoop: Boolean get() = outSec > inSec
+    }
+
     /** A Pad FX slot; a null [type] is a slip loop roll. */
     class PadFx(val label: String, val type: FxType?, val beats: Double)
 
@@ -900,6 +960,9 @@ class Deck(val index: Int) {
         /** One jog tick: the platter is 720 ticks per turn at 33 1/3 rpm. */
         const val JOG_TICK_SECONDS = 1.8 / 720.0
         private const val MIN_LOOP_SECONDS = 0.02
+
+        /** How far past a memory cue the playhead must be for CUE/LOOP CALL ◁ to go to an earlier one. */
+        private const val CALL_TOLERANCE = 0.05
         private const val FILTER_DEAD_ZONE = 0.02f
 
         // Keylock grains, in 44.1 kHz frames: a new grain every 70 ms, crossfaded over

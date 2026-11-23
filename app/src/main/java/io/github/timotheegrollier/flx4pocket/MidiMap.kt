@@ -33,10 +33,10 @@ object MidiMap {
     const val NOTE_LOOP_OUT = 0x11
     const val NOTE_FOUR_BEAT_EXIT = 0x4D // 4 BEAT/EXIT
     const val NOTE_ACTIVE_LOOP = 0x50 // SHIFT + 4 BEAT/EXIT
-    const val NOTE_LOOP_HALVE = 0x51 // CUE/LOOP CALL left
-    const val NOTE_LOOP_DOUBLE = 0x53 // CUE/LOOP CALL right
-    const val NOTE_JUMP_BACK = 0x3E // SHIFT + CUE/LOOP CALL left
-    const val NOTE_JUMP_FORWARD = 0x3D // SHIFT + CUE/LOOP CALL right
+    const val NOTE_CUE_LOOP_CALL_PREV = 0x51 // CUE/LOOP CALL ◁
+    const val NOTE_CUE_LOOP_CALL_NEXT = 0x53 // CUE/LOOP CALL ▷
+    const val NOTE_MEMORY_DELETE = 0x3E // SHIFT + CUE/LOOP CALL ◁
+    const val NOTE_MEMORY_SAVE = 0x3D // SHIFT + CUE/LOOP CALL ▷
     const val NOTE_CUE_CHANNEL = 0x54
     const val NOTE_QUANTIZE = 0x68 // SHIFT + channel CUE
     const val NOTE_JOG_TOUCH = 0x36
@@ -72,6 +72,8 @@ object MidiMap {
     const val NOTE_BROWSE_SHIFT_PRESS = 0x42
     const val NOTE_LOAD_A = 0x46
     const val NOTE_LOAD_B = 0x47
+    const val NOTE_SHIFT_LOAD_A = 0x68
+    const val NOTE_SHIFT_LOAD_B = 0x7A
     const val NOTE_MASTER_CUE = 0x63
 
     // Beat FX notes (channel 4; ON/OFF and CH2 select also arrive on channel 5).

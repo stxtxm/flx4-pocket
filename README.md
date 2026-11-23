@@ -14,14 +14,14 @@ Beat FX and a crossfader.
 
 Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
-> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 changes
-> (loops, latency, folding panels) are covered by JVM tests (DSP, deck logic,
+> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 and 0.5.0
+> changes (loops, latency, folding panels, library) are covered by JVM tests (DSP, deck logic,
 > the MIDI address table, the real screen under Robolectric) but not yet by a
 > hardware check. See [docs/TESTING.md](docs/TESTING.md) for what must be
 > checked on a device, and [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for
 > what Android itself may refuse (four-channel USB audio, latency).
 
-## What is in 0.4.0
+## What is in 0.5.0
 
 **Mixing from the phone**
 
@@ -31,7 +31,9 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   the zoom so their beats can be lined up by eye.
 - **DECK A**, **MIXER** and **DECK B** (under the waveforms) fold their panel
   away; the others widen to fill the space, and with all three folded the
-  waveforms take the whole screen. The choice is remembered.
+  waveforms take the whole screen. Drag the bar under the waveforms (outside
+  its buttons, at the ⇕) to share the height differently. Both are
+  remembered.
 - Track overview per deck with needle search.
 - Eight pads per deck in five modes: Hot Cue, Beat Loop, Beat Jump, Pad FX 1
   (echoes and slip loop rolls) and Pad FX 2 (low-cut echo, reverb, flanger,
@@ -46,7 +48,13 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   back to the same place in the beat, a loop pressed just before a beat starts
   on it), and the loop seam crossfades instead of clicking. IN or OUT during a
   loop selects that point (it blinks): the jog, or a drag on the waveform,
-  moves it until the button is pressed again.
+  moves it until the button is pressed again. KEY keeps the seam seamless too.
+- Memory cues, as in rekordbox: SHIFT + CUE/LOOP CALL ► saves the cue point
+  (or the loop playing), CUE/LOOP CALL ◄ ► calls them in order (red marks on
+  the waveform), SHIFT + ◄ deletes the one called. On screen, ½ and 2× become
+  ◄ MEM / MEM ► when the deck has memory cues and no loop plays.
+- Instant doubles: LOAD pressed twice puts the other deck's track on this
+  deck, at the same place and speed, playing if it plays.
 - Low latency: PLAY, the loop buttons, TAP and FX ON act when the finger
   lands, and the audio buffer is tuned down to the smallest the output takes
   without glitches. The status line shows the measured output latency.
@@ -57,11 +65,18 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 - Beat FX on deck A, deck B or the master: echo, low-cut echo, reverb,
   flanger, phaser, trans, with beat length and depth.
 - Smart CFX: the filter knob becomes a resonant sweep with a synced echo.
-- Searchable library over a music folder (no storage permission), hot cues and
-  analysis remembered per track. Tap an empty deck (or its PLAY) to open the
-  library for that deck, then tap a track to load it there. The library opens
-  under the waveforms, so the playing deck and its remaining time stay in
-  sight.
+- Library without storage permission: **+ FOLDER** adds a music folder with
+  its subfolders (as many folders as you like), **+ TRACKS** adds single
+  files. A folder column shows them as a tree with track counts, next to the
+  searchable track list; **BPM ↑** sorts by tempo. Playlists: **+ PLAYLIST**,
+  then long-press a track to add it (they keep their order and show in the
+  folder column). Long-press a top folder or an added track to take it out of
+  the library (the files stay), a playlist to delete it. Hot cues and analysis are remembered
+  per track. Tap an empty deck (or its PLAY) to open the library for that
+  deck, then tap a track to load it there. The library opens under the
+  waveforms, so the playing deck and its remaining time stay in sight. With
+  the FLX4: BROWSE press moves between the folders and the tracks, as in
+  rekordbox.
 - A deck that is playing refuses a new track (load lock): pause it first.
 - A few seconds after loading, the whole track is in memory, so hot cues,
   loops and jumps play at once, with a short crossfade instead of a click.
@@ -100,10 +115,11 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.4.0.apk
+   adb install -r FLX4-Pocket-0.5.0.apk
    ```
-3. Open FLX4 Pocket, tap **FOLDER** in the library and pick your music
-   folder. Tap an empty deck, then a track, to load it there; **DECK A** and
+3. Open FLX4 Pocket and add your music in the library: **+ FOLDER** takes a
+   folder with its subfolders (add as many as you like), **+ TRACKS** single
+   files. Tap an empty deck, then a track, to load it there; **DECK A** and
    **DECK B** on each track load it on either deck.
 4. Optional: connect the phone to the DDJ-FLX4's **device** USB-C port. The
    phone can power the controller on its own (USB bus power, 5 V 500 mA); if
@@ -127,7 +143,7 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.4.0.apk
+adb install -r FLX4-Pocket-0.5.0.apk
 ```
 
 ## Controller workflow
@@ -150,11 +166,14 @@ adb install -r FLX4-Pocket-0.4.0.apk
 | IN / OUT | Loop in / loop out (the loop starts). During a loop: select that point, the jog moves it, press again to finish |
 | 4 BEAT/EXIT | 4-beat loop from here / leave the loop |
 | SHIFT + 4 BEAT/EXIT | Turn the last loop back on (active loop), in phase |
-| CUE/LOOP CALL ◄ ► | Halve / double the loop; with SHIFT jump 16 beats |
+| CUE/LOOP CALL ◄ ► | During a loop: halve / double it; otherwise call the previous / next memory cue |
+| SHIFT + CUE/LOOP CALL ◄ / ► | Delete the memory cue called last / save the loop playing or the cue point as a memory cue |
 | HOT CUE, PAD FX1/2, BEAT JUMP, BEAT LOOP + pads | Pad modes |
 | SHIFT + hot-cue pad | Delete the hot cue |
-| Browse turn / press | Library selection (the first turn only opens it) / open, close |
-| LOAD 1 / 2 | Load the selected track and close the library; with the library closed, open it for that deck first |
+| Browse turn | Move in the folders or the tracks (the first turn only opens the library); with SHIFT ten rows at a time |
+| Browse press / SHIFT + press | Move between the folders and the tracks, as in rekordbox / open, close the library |
+| LOAD 1 / 2 | Load the selected track and close the library; with the library closed, open it for that deck first. Twice: instant doubles |
+| SHIFT + LOAD 1 / 2 | Library sorted by BPM on the master's tempo / open, close the library |
 | SHIFT + channel CUE | Toggle quantize |
 
 The complete address table is in [docs/DDJ-FLX4-MIDI.md](docs/DDJ-FLX4-MIDI.md).

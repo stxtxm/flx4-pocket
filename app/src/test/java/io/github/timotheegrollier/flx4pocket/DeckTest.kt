@@ -208,18 +208,131 @@ class DeckTest {
         deck.seekTo(11.0 + 25.0 / 44100) // out of phase with the loop start: a hard cut would step by ~0.5
         deck.togglePlay()
         deck.render(256, l, r, null)
-        var previous = l[255]
+        val previous = l[255]
         deck.setLoopOut() // the loop closes here, so the deck jumps back to 10.0, then loops once more
-        var worst = 0f
-        repeat((1.5 * 44100 / 256).toInt()) {
-            deck.render(256, l, r, null)
-            for (x in l) {
-                worst = maxOf(worst, abs(x - previous))
-                previous = x
-            }
-        }
+        val worst = worstStep(1.5, previous)
         assertTrue("still looping", deck.positionSec in 10.0..11.01)
         assertTrue("largest step $worst", worst < 0.05f)
+    }
+
+    /** Largest sample-to-sample step over [seconds] of playback, starting from [previous]. */
+    private fun worstStep(seconds: Double, previous: Float): Float {
+        var last = previous
+        var worst = 0f
+        repeat((seconds * 44100 / 256).toInt()) {
+            deck.render(256, l, r, null)
+            for (x in l) {
+                worst = maxOf(worst, abs(x - last))
+                last = x
+            }
+        }
+        return worst
+    }
+
+    @Test
+    fun `with KEY the loop seam crossfades too`() {
+        deck.load(SineSource(441.0), "Sine", "", 0.0)
+        deck.quantize = false
+        deck.keyLock = true
+        deck.seekTo(10.0)
+        deck.setLoopIn()
+        deck.seekTo(11.0 + 25.0 / 44100)
+        deck.togglePlay()
+        repeat(40) { deck.render(256, l, r, null) } // past the first grains
+        val previous = l[255]
+        deck.setLoopOut()
+        val worst = worstStep(2.5, previous)
+        assertTrue("still looping", deck.positionSec in 10.0..11.3)
+        assertTrue("largest step $worst", worst < 0.08f)
+    }
+
+    /** The sample value is the position in the track: 0 at the start, 1 at the end. */
+    private class RampSource : PcmSource {
+        override val sampleRate = 44100
+        override val durationSec = 30.0
+        override fun sampleFrame(frame: Double, out: FloatArray): Boolean {
+            if (frame < 0 || frame > durationSec * sampleRate) return false
+            out[0] = (frame / (durationSec * sampleRate)).toFloat()
+            out[1] = out[0]
+            return true
+        }
+
+        override fun hasFrame(frame: Double) = true
+        override fun seek(seconds: Double) {}
+        override fun close() {}
+    }
+
+    @Test
+    fun `with KEY the loop starts over at the seam, not a grain later`() {
+        deck.load(RampSource(), "Ramp", "", 0.0)
+        deck.quantize = false
+        deck.keyLock = true
+        deck.seekTo(10.0)
+        deck.setLoopIn()
+        deck.seekTo(11.0)
+        deck.togglePlay()
+        deck.setLoopOut() // loops 10.0 to 11.0 from 10.0
+        var previous = deck.positionSec
+        repeat(400) {
+            deck.render(256, l, r, null)
+            if (deck.positionSec < previous) { // wrapped during this block
+                repeat(3) { deck.render(256, l, r, null) } // past the 512-frame grain crossfade
+                assertEquals("playing the loop start", 10.0 / 30.0, l[255].toDouble(), 0.005)
+                return
+            }
+            previous = deck.positionSec
+        }
+        throw AssertionError("the loop never wrapped")
+    }
+
+    @Test
+    fun `memory cues are saved, called in order and deleted`() {
+        deck.seekTo(2.0)
+        deck.cueDown() // paused away from the cue point: sets it here
+        deck.cueUp()
+        deck.saveMemoryCue()
+        deck.seekTo(5.0)
+        deck.cueDown()
+        deck.cueUp()
+        deck.saveMemoryCue()
+        deck.seekTo(8.0)
+        deck.toggleBeatLoop(4.0) // 8.0 to 10.0
+        deck.saveMemoryCue() // a memory loop
+        deck.exitLoop()
+        assertEquals(3, deck.memoryCues.size)
+
+        deck.seekTo(0.0)
+        deck.cueLoopCall(1)
+        assertEquals(2.0, deck.positionSec, 1e-9)
+        assertEquals(2.0, deck.cuePointSec, 1e-9)
+        deck.cueLoopCall(1)
+        deck.cueLoopCall(1) // the loop: set and playing
+        assertTrue(deck.loopActive)
+        assertEquals(10.0, deck.loopOutSec, 1e-9)
+        deck.cueLoopCall(-1) // in a loop, ◁ halves it
+        assertEquals(2.0, deck.loopBeats(), 1e-9)
+
+        deck.exitLoop()
+        deck.cueLoopCall(-1)
+        assertEquals(5.0, deck.positionSec, 1e-9)
+        deck.deleteMemoryCue() // the one just called
+        assertEquals(listOf(2.0, 8.0), deck.memoryCues.map { it.inSec })
+    }
+
+    @Test
+    fun `instant doubles play along at the same speed and place`() {
+        val other = Deck(1)
+        other.load(FakeSource(), "Same", "", 0.0)
+        other.cycleTempoRange() // ±16 %
+        other.setTempoNormalized(0.5)
+        other.keyLock = true
+        other.seekTo(12.3)
+        other.togglePlay()
+        deck.playAlong(other)
+        assertEquals(other.tempoRate, deck.tempoRate, 1e-9)
+        assertEquals(12.3, deck.positionSec, 1e-9)
+        assertTrue(deck.playing)
+        assertTrue(deck.keyLock)
     }
 
     @Test

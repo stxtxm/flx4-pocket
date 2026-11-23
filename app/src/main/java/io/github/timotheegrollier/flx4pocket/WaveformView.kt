@@ -21,6 +21,7 @@ object WaveColors {
     const val MID = 0xFFFF9A2E.toInt()
     const val HIGH = 0xFFF4F7FB.toInt()
     const val CUE = 0xFFFF8A00.toInt()
+    const val MEMORY = 0xFFFF3B3B.toInt()
     val HOT_CUES = intArrayOf(
         0xFF34D399.toInt(), 0xFF22D3EE.toInt(), 0xFF60A5FA.toInt(), 0xFFA78BFA.toInt(),
         0xFFF472B6.toInt(), 0xFFF87171.toInt(), 0xFFFBBF24.toInt(), 0xFFA3E635.toInt()
@@ -228,6 +229,21 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
             paint.color = WaveColors.CUE
             canvas.drawPath(triangle, paint)
         }
+        // Memory cues, as rekordbox draws them: red marks along the top, a red bar over a loop.
+        paint.color = WaveColors.MEMORY
+        val mark = 5f * density
+        for (memory in d.memoryCues) {
+            val end = if (memory.isLoop) memory.outSec else memory.inSec
+            if (memory.inSec > right || end < left) continue
+            val x = ((memory.inSec - left) / secondsPerPixel).toFloat()
+            triangle.rewind()
+            triangle.moveTo(x - mark, 0f)
+            triangle.lineTo(x + mark, 0f)
+            triangle.lineTo(x, mark * 1.4f)
+            triangle.close()
+            canvas.drawPath(triangle, paint)
+            if (memory.isLoop) canvas.drawRect(x, 0f, ((end - left) / secondsPerPixel).toFloat(), 2f * density, paint)
+        }
         val cues = d.hotCues
         val flag = 13f * density
         for (i in cues.indices) {
@@ -334,6 +350,11 @@ class OverviewView @JvmOverloads constructor(context: Context, attrs: AttributeS
             val x = ((cues[i] ?: continue) / duration * w).toFloat()
             paint.color = WaveColors.HOT_CUES[i]
             canvas.drawRect(x - density, 0f, x + density, h * 0.4f, paint)
+        }
+        paint.color = WaveColors.MEMORY
+        for (memory in d.memoryCues) {
+            val x = (memory.inSec / duration * w).toFloat()
+            canvas.drawRect(x - density, h * 0.6f, x + density, h, paint)
         }
         paint.color = 0xFFFFFFFF.toInt()
         canvas.drawRect(playhead - density, 0f, playhead + density, h, paint)

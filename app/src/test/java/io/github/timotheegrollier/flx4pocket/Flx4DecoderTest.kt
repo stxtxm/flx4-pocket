@@ -71,10 +71,10 @@ class Flx4DecoderTest {
         assertEquals(listOf("button 0 LOOP_OUT true"), send(0x90, 0x11, 0x7F))
         assertEquals(listOf("button 1 FOUR_BEAT_EXIT true"), send(0x91, 0x4D, 0x7F))
         assertEquals(listOf("button 1 ACTIVE_LOOP true"), send(0x91, 0x50, 0x7F))
-        assertEquals(listOf("button 0 LOOP_HALVE true"), send(0x90, 0x51, 0x7F))
-        assertEquals(listOf("button 0 LOOP_DOUBLE true"), send(0x90, 0x53, 0x7F))
-        assertEquals(listOf("button 0 JUMP_BACK true"), send(0x90, 0x3E, 0x7F))
-        assertEquals(listOf("button 0 JUMP_FORWARD true"), send(0x90, 0x3D, 0x7F))
+        assertEquals(listOf("button 0 CUE_LOOP_CALL_PREV true"), send(0x90, 0x51, 0x7F))
+        assertEquals(listOf("button 0 CUE_LOOP_CALL_NEXT true"), send(0x90, 0x53, 0x7F))
+        assertEquals(listOf("button 0 MEMORY_DELETE true"), send(0x90, 0x3E, 0x7F))
+        assertEquals(listOf("button 0 MEMORY_SAVE true"), send(0x90, 0x3D, 0x7F))
     }
 
     @Test
@@ -151,8 +151,11 @@ class Flx4DecoderTest {
         assertEquals(listOf("browse -1 false"), send(0xB6, 0x40, 0x7F))
         assertEquals(listOf("browse 2 true"), send(0xB6, 0x64, 0x02))
         assertEquals(listOf("button -1 BROWSE_PRESS true"), send(0x96, 0x41, 0x7F))
+        assertEquals(listOf("button -1 BROWSE_SHIFT_PRESS true"), send(0x96, 0x42, 0x7F))
         assertEquals(listOf("button 0 LOAD true"), send(0x96, 0x46, 0x7F))
         assertEquals(listOf("button 1 LOAD true"), send(0x96, 0x47, 0x7F))
+        assertEquals(listOf("button 0 SHIFT_LOAD true"), send(0x96, 0x68, 0x7F))
+        assertEquals(listOf("button 1 SHIFT_LOAD true"), send(0x96, 0x7A, 0x7F))
     }
 
     @Test
