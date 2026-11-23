@@ -49,6 +49,10 @@ class AudioEngine(context: Context) {
     var routedDeviceName: String? = null
         private set
 
+    init {
+        start()
+    }
+
     private val appContext = context.applicationContext
     private var track: AudioTrack? = null
     private var worker: Thread? = null

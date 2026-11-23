@@ -17,6 +17,8 @@ import java.security.MessageDigest
  */
 object UpdateChecker {
 
+    const val GITHUB_UNREACHABLE = "GitHub was unreachable (check your connection and try again)"
+
     data class UpdateInfo(
         val versionCode: Long,
         val versionName: String,
@@ -28,9 +30,27 @@ object UpdateChecker {
         val htmlUrl: String
     )
 
+    /**
+     * The reason the last [check] returned null: either no update is available
+     * or GitHub (or its manifest) could not be reached. Used to tell the user
+     * apart from a plain "no update found".
+     */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     fun check(owner: String, repo: String, currentVersionCode: Long): UpdateInfo? {
-        val release = getJson("https://api.github.com/repos/$owner/$repo/releases/latest") ?: return null
-        val assets = release.optJSONArray("assets") ?: return null
+        lastError = null
+        val release = getJson("https://api.github.com/repos/$owner/$repo/releases/latest")
+        if (release == null) {
+            lastError = GITHUB_UNREACHABLE
+            return null
+        }
+        val assets = release.optJSONArray("assets")
+        if (assets == null) {
+            lastError = GITHUB_UNREACHABLE
+            return null
+        }
         var manifestUrl: String? = null
         val apkAssets = HashMap<String, JSONObject>()
         for (i in 0 until assets.length()) {
@@ -40,7 +60,11 @@ object UpdateChecker {
             if (name == "update.json") manifestUrl = url
             if (name.endsWith(".apk", ignoreCase = true)) apkAssets[name] = asset
         }
-        val manifest = getJson(manifestUrl ?: return null) ?: return null
+        val manifest = manifestUrl?.let { getJson(it) }
+        if (manifest == null) {
+            lastError = GITHUB_UNREACHABLE
+            return null
+        }
         val versionCode = manifest.optLong("versionCode", 0L)
         if (versionCode <= currentVersionCode) return null
 

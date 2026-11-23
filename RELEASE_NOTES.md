@@ -1,13 +1,17 @@
-FLX4 Pocket 0.1.1 — first public release, with a working in-app updater.
+FLX4 Pocket 0.1.2
 
-Two decks, one DDJ-FLX4, exact USB MIDI mapping, beat sync, EQ/filter/trim,
-crossfader, hot cues, beat loops, beat jumps, FLX4 LED feedback and a local
-folder library. Split-cue is available for stereo splitter cables.
+Standalone first install — includes the in-app updater fix.
 
-Android does not expose the FLX4's four-channel USB audio interface reliably:
-the app is MIDI-only and plays audio from the phone (or a USB audio output the
-phone exposes). The controller also needs power on its dedicated USB-C power
-port; the phone does not power it.
+- Fixed in-app updates on Pixel 9a / Android 15: the PackageInstaller result
+  status is now delivered through a mutable `PendingIntent`, so the app no
+  longer reports "No update found" when the update actually installed.
+- Play works standalone: the PLAY button gives feedback when no track is
+  loaded, and audio errors are shown in the status line.
+- Real-time horizontal spectra for both decks, like the famous DJ apps.
+- Bigger touch buttons; the version label shows the installed build.
+- In-app updater: checks every 30 minutes while the app is open, and the
+  update button always shows the latest version.
+- Unit tests for the FFT/spectrum DSP.
 
-Updates are delivered inside the app from this GitHub release. Android will ask
-once to allow installs and will always show its own confirmation dialog.
+This is the version to install if you tried 0.1.1 on a Pixel 9a and the
+update never went through.

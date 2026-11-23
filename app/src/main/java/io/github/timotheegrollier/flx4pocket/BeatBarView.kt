@@ -2,44 +2,95 @@ package io.github.timotheegrollier.flx4pocket
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.View
 
 /**
- * Shows four beats of the current grid and a playhead derived from the actual
- * sample position, so the UI corroborates what the audio engine is doing.
+ * Real-time spectrum display for one deck.
+ *
+ * The last [BAR_COUNT] bands of the deck's audio are drawn as vertical bars
+ * scrolling horizontally across the view. [aboveOverlay] lets one of the two
+ * stacked deck views draw its bars like the one overlapping it, so the two
+ * spectra read as a single stack pushed across the screen.
  */
 class BeatBarView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(31, 41, 55)
-        style = Paint.Style.FILL
-    }
-    private val beatPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(55, 65, 81)
-        strokeWidth = 2f
-    }
-    private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.CYAN
-        style = Paint.Style.FILL
+    companion object {
+        private const val BAR_COUNT = 32
+        private const val DEFAULT_ACCENT = 0xFF36F9D9.toInt()
+        private const val INACTIVE = 0xFF1F2937.toInt()
     }
 
-    private var accent = Color.CYAN
-    private var phase = 0.0
-    private var beatIndex = 0L
-    private var playing = false
+    private val bars = FloatArray(BAR_COUNT)
+    private var beatPulse = 0f
 
-    fun setState(phase: Double, beatIndex: Long, playing: Boolean, accent: Int) {
-        this.phase = phase.coerceIn(0.0, 0.999)
-        this.beatIndex = beatIndex
-        this.playing = playing
-        this.accent = accent
-        activePaint.color = accent
+    /** When true the view draws its bars with the style of the stack below it. */
+    var aboveOverlay: Boolean = false
+        set(value) { field = value; invalidate() }
+
+    var accent: Int = DEFAULT_ACCENT
+        set(value) {
+            field = value
+            barPaint.color = value
+            barPaint.alpha = 255
+            pulsePaint.color = value
+            overlayBg.color = value
+            overlayBg.alpha = 20
+            invalidate()
+        }
+
+    private var barPaint: Paint
+    private var pulsePaint: Paint
+    private var bgPaint: Paint
+    private var overlayBg: Paint
+
+    init {
+        barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = accent
+            alpha = 255
+        }
+        pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = accent
+            alpha = 200
+        }
+        bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = INACTIVE
+            alpha = 255
+        }
+        overlayBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = accent
+            alpha = 20
+        }
+    }
+
+    /**
+     * Publishes the latest [BAR_COUNT] energy bands. Bars decay slowly so the
+     * display keeps showing a bit of the recent history while new energy
+     * scrolls across.
+     */
+    fun publishSpectrum(spectrum: FloatArray?) {
+        if (spectrum == null || spectrum.size != BAR_COUNT) return
+        for (i in bars.indices) {
+            bars[i] = (spectrum[i].coerceAtLeast(0f) + bars[i]) * 0.5f
+        }
+        invalidate()
+    }
+
+    fun setState(phase: Double, beatIndex: Long, playing: Boolean, accentColor: Int) {
+        if (accent != accentColor) accent = accentColor
+        beatPulse = if (playing) 1f else 0f
         invalidate()
     }
 
@@ -49,22 +100,24 @@ class BeatBarView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        canvas.drawRoundRect(0f, 0f, w, h, 3f, 3f, backgroundPaint)
+        if (aboveOverlay) {
+            canvas.drawRect(0f, 0f, w, h, overlayBg)
+        }
+        canvas.drawRoundRect(0f, 0f, w, h, 3f, 3f, bgPaint)
 
-        val inBar = ((beatIndex % 4) + 4) % 4
-        for (i in 0 until 4) {
-            val x = w * i / 4f
-            if (i == inBar.toInt() && playing) {
-                activePaint.alpha = 70
-                canvas.drawRect(x + 1f, 1f, x + w / 4f - 1f, h - 1f, activePaint)
-                activePaint.alpha = 255
-            }
-            if (i > 0) canvas.drawLine(x, 1f, x, h - 1f, beatPaint)
+        val gap = w / (BAR_COUNT + 1f)
+        val maxBar = (h - 2f) / 2f
+        for (i in 0 until BAR_COUNT) {
+            val value = bars[i]
+            val barW = gap * 0.6f
+            val x = gap * (i + 1f) - barW / 2f
+            val barH = (value.coerceAtLeast(0.02f) * maxBar).coerceAtLeast(1f)
+            canvas.drawRect(x, h - barH, x + barW, h - 1f, barPaint)
         }
 
-        val playhead = ((inBar + phase) / 4.0 * w).toFloat().coerceIn(1f, w - 1f)
-        activePaint.alpha = if (playing) 255 else 150
-        canvas.drawRect(playhead - 1.5f, 0f, playhead + 1.5f, h, activePaint)
-        activePaint.alpha = 255
+        if (beatPulse > 0.05f) {
+            pulsePaint.alpha = (120f + beatPulse * 135f).toInt()
+            canvas.drawRect(0f, 0f, w, 2f, pulsePaint)
+        }
     }
 }

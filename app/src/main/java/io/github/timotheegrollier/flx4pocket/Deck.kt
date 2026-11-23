@@ -92,11 +92,21 @@ class Deck(val index: Int) {
     var endReached: Boolean = false
         private set
 
+    /**
+     * Latest real-time energy bands (32 values, peak-normalized), refreshed
+     * every time the render window is filled while playing. Null when stopped.
+     */
+    @Volatile
+    var spectrum: FloatArray? = null
+        private set
+
     // Audio-thread state.
     private var cursor: Double = 0.0
     private var tempoNormalized: Double = 0.0
     private var syncBaseFactor: Double = 1.0
     private val sample = FloatArray(2)
+    private val spectrumSamples = FloatArray(SPECTRUM_FRAMES)
+    private var spectrumPos = 0
 
     private val lowL = Biquad()
     private val lowR = Biquad()
@@ -131,6 +141,8 @@ class Deck(val index: Int) {
         loopInSec = -1.0
         loopOutSec = -1.0
         loopActive = false
+        spectrum = null
+        spectrumPos = 0
         releaseSyncInternal()
         resetFilters()
         if (old != null) retire(old)
@@ -151,6 +163,8 @@ class Deck(val index: Int) {
         loopInSec = -1.0
         loopOutSec = -1.0
         loopActive = false
+        spectrum = null
+        spectrumPos = 0
         releaseSyncInternal()
         if (old != null) retire(old)
     }
@@ -347,6 +361,7 @@ class Deck(val index: Int) {
             java.util.Arrays.fill(outL, 0, frames, 0f)
             java.util.Arrays.fill(outR, 0, frames, 0f)
             positionSec = cursor / src.sampleRate
+            spectrum = null
             return
         }
 
@@ -379,6 +394,12 @@ class Deck(val index: Int) {
                 outR[i] = 0f
                 i++
                 continue
+            }
+
+            spectrumSamples[spectrumPos] = sample[0]
+            spectrumPos = (spectrumPos + 1) % spectrumSamples.size
+            if (spectrumPos == 0) {
+                spectrum = Spectrum.spectrum(spectrumSamples)
             }
 
             var left = sample[0].toDouble()
@@ -499,5 +520,6 @@ class Deck(val index: Int) {
         const val PAD_HOT_CUE = 0
         const val PAD_BEAT_LOOP = 1
         const val PAD_BEAT_JUMP = 2
+        private const val SPECTRUM_FRAMES = 256
     }
 }

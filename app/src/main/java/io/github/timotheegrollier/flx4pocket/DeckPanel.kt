@@ -137,12 +137,12 @@ class DeckPanel @JvmOverloads constructor(
         accent = accentColor
         label.text = if (index == 0) "DECK A" else "DECK B"
         label.setTextColor(accentColor)
-        label.contentDescription = if (index == 0) "Deck A" else "Deck B"
+        label.contentDescription = label.text
         seekBars.forEach {
             it.progressTintList = ColorStateList.valueOf(accentColor)
             it.thumbTintList = ColorStateList.valueOf(accentColor)
         }
-        pads.forEach { it.setTextColor(context.getColor(R.color.text_dim)) }
+        pads.forEach { it.setTextColor(context.getColor(R.color.text)) }
     }
 
     fun setLoading(text: String?) {
@@ -175,10 +175,10 @@ class DeckPanel @JvmOverloads constructor(
             }
         )
         metaLabel.text = when {
-            error != null -> "Tap LIBRARY to choose another file"
-            loading != null -> "Decoding audio…"
-            hasTrack -> deck.artist.ifBlank { "Analyzing…" }
-            else -> "FLX4 LOAD 1 / 2 or open LIBRARY"
+            error != null -> context.getString(R.string.status_controller, "Load a track first")
+            loading != null -> context.getString(R.string.status_output, "Decoding audio…")
+            hasTrack -> deck.artist.ifBlank { context.getString(R.string.status_output, "Analyzing…") }
+            else -> context.getString(R.string.status_output, "FLX4 LOAD 1 / 2 or open LIBRARY")
         }
 
         val bpm = deck.effectiveBpm()
@@ -205,13 +205,13 @@ class DeckPanel @JvmOverloads constructor(
         )
 
         playButton.text = if (deck.playing) "PAUSE" else "PLAY"
-        styleButton(playButton, deck.playing)
-        styleButton(cueButton, !deck.playing && hasTrack)
-        styleButton(syncButton, deck.syncEnabled)
-        styleButton(masterButton, masterIndex == deckIndex)
-        styleButton(loopInButton, deck.loopInSec >= 0.0)
-        styleButton(loopOutButton, deck.loopOutSec > deck.loopInSec)
-        styleButton(reloopButton, deck.loopActive)
+        styleButton(playButton, deck.playing, true)
+        styleButton(cueButton, !deck.playing && hasTrack, false)
+        styleButton(syncButton, deck.syncEnabled, deck.syncEnabled)
+        styleButton(masterButton, masterIndex == deckIndex, true)
+        styleButton(loopInButton, deck.loopInSec >= 0.0, deck.loopInSec >= 0.0)
+        styleButton(loopOutButton, deck.loopOutSec > deck.loopInSec, deck.loopOutSec > deck.loopInSec)
+        styleButton(reloopButton, deck.loopActive, deck.loopActive)
 
         if (lastPadMode != deck.padMode) {
             lastPadMode = deck.padMode
@@ -245,6 +245,10 @@ class DeckPanel @JvmOverloads constructor(
         if (!eqLow.isPressed) eqLow.progress = (deck.eqLow * 1000f).roundToInt()
     }
 
+    fun publishSpectrum(spectrum: FloatArray?) {
+        beatBar.publishSpectrum(spectrum)
+    }
+
     private fun updatePadLabels(mode: Int) {
         val labels = when (mode) {
             Deck.PAD_BEAT_LOOP -> listOf("1/4", "1/2", "1", "2", "4", "8", "16", "32")
@@ -254,18 +258,18 @@ class DeckPanel @JvmOverloads constructor(
         pads.forEachIndexed { index, button -> button.text = labels[index] }
     }
 
-    private fun styleButton(button: Button, active: Boolean) {
+    private fun styleButton(button: Button, active: Boolean, emphasize: Boolean) {
         button.backgroundTintList = ColorStateList.valueOf(
             if (active) accent else context.getColor(R.color.panel_alt)
         )
-        button.setTextColor(if (active) Color.BLACK else context.getColor(R.color.text))
+        button.setTextColor(if (active || emphasize) context.getColor(R.color.text) else context.getColor(R.color.text_dim))
     }
 
     private fun stylePad(pad: Button, active: Boolean) {
         pad.backgroundTintList = ColorStateList.valueOf(
             if (active) accent else context.getColor(R.color.panel_alt)
         )
-        pad.setTextColor(if (active) Color.BLACK else context.getColor(R.color.text_dim))
+        pad.setTextColor(if (active) context.getColor(R.color.text) else context.getColor(R.color.text_dim))
     }
 
     private fun addSeekBar(bar: SeekBar, onChange: (Int) -> Unit) {

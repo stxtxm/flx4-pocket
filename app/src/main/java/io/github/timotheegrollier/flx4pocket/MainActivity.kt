@@ -59,8 +59,27 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
     private lateinit var cueAButton: Button
     private lateinit var cueBButton: Button
     private lateinit var masterLabel: TextView
-
+    private lateinit var versionLabel: TextView
     private val tracks = ArrayList<Track>()
+
+    private val versionName: String
+        get() {
+            return try {
+                val info = packageManager.getPackageInfo(packageName, 0)
+                val vc = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
+                    @Suppress("DEPRECATION")
+                    info.versionCode.toLong()
+                }
+                val vn = if (Build.VERSION.SDK_INT >= 28) info.versionName else {
+                    @Suppress("DEPRECATION")
+                    info.versionName
+                }
+                String.format(Locale.US, "%s (build %d)", vn, vc)
+            } catch (_: Exception) {
+                "unknown (build error)"
+            }
+        }
+
     private var selectedTrack = -1
     private var libraryTarget = 0
     private var folderUri: Uri? = null
@@ -94,10 +113,10 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         volumeControlStream = AudioManager.STREAM_MUSIC
 
         engine = AudioEngine(this)
-        engine.start()
 
         setContentView(R.layout.activity_main)
         statusLabel = findViewById(R.id.status)
+        versionLabel = findViewById(R.id.version_label)
         updateButton = findViewById(R.id.btn_update)
         vu = findViewById(R.id.mixer_vu)
         mixerCross = findViewById(R.id.mixer_crossfader)
@@ -146,12 +165,15 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         midi.start()
 
         requestAudioFocus()
+        versionLabel.text = getString(R.string.version_format, versionName)
         ui.post(refreshRunnable)
         ui.postDelayed({ checkForUpdates(false) }, 4000)
+        startAutoUpdateCheck()
     }
 
     override fun onResume() {
         super.onResume()
+        refreshUpdateStateIfNeeded()
         if (Build.VERSION.SDK_INT >= 26) {
             val pending = pendingUpdateInfo
             if (pending != null && packageManager.canRequestPackageInstalls()) {
@@ -161,8 +183,25 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         }
     }
 
+    private fun refreshUpdateStateIfNeeded() {
+        val info = updateInfo
+        if (info != null) {
+            updateButton.apply {
+                text = getString(R.string.btn_update_available, info.versionName)
+                backgroundTintList = ColorStateList.valueOf(getColor(R.color.accent))
+                setTextColor(getColor(R.color.text))
+            }
+        } else {
+            resetUpdateButton()
+        }
+        versionLabel.text = getString(R.string.version_format, versionName)
+    }
+
+
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
+        autoCheckRunnable?.let { ui.removeCallbacks(it) }
+        autoCheckRunnable = null
         activeUpdateDialog?.dismiss()
         activeUpdateDialog = null
         if (::midi.isInitialized) midi.close()
@@ -226,7 +265,11 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
     private fun setupUpdateButton() {
         updateButton.setOnClickListener {
             val info = updateInfo
-            if (info != null) showUpdateDialog(info) else checkForUpdates(true)
+            if (info != null) {
+                showUpdateDialog(info)
+            } else {
+                checkForUpdates(true)
+            }
         }
     }
 
@@ -254,6 +297,8 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         override fun run() {
             deckPanels[0].render(engine.decks[0], engine.masterDeckIndex)
             deckPanels[1].render(engine.decks[1], engine.masterDeckIndex)
+            deckPanels[0].publishSpectrum(engine.decks[0].spectrum)
+            deckPanels[1].publishSpectrum(engine.decks[1].spectrum)
             vu.setLevels(engine.meterL, engine.meterR)
             if (!mixerCross.isPressed) {
                 mixerCross.progress = (engine.crossfader * 1000f).roundToInt()
@@ -291,7 +336,12 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
     }
 
     private fun updateStatusLine() {
-        val controller = midiName ?: "DDJ-FLX4 not detected"
+        engine.error?.let {
+            statusLabel.text = it
+            statusLabel.setTextColor(getColor(R.color.danger))
+            return
+        }
+        val controller = midiName ?: getString(R.string.status_no_controller)
         val output = engine.routedDeviceName ?: "phone output"
         statusLabel.text = String.format(
             Locale.US,
@@ -300,6 +350,7 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
             output,
             if (engine.splitCue) "on" else "off"
         )
+        statusLabel.setTextColor(getColor(R.color.text_dim))
     }
 
     private fun styleToggle(button: Button, active: Boolean, activeColor: Int) {
@@ -324,7 +375,13 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
     // DeckPanel callbacks (touch UI)
     // ---------------------------------------------------------------------
 
-    override fun onPlay(deck: Int) = engine.decks[deck].togglePlay()
+    override fun onPlay(deck: Int) {
+        if (engine.decks[deck].hasTrack()) {
+            engine.decks[deck].togglePlay()
+        } else {
+            toast(getString(R.string.play_no_track))
+        }
+    }
     override fun onCue(deck: Int) = engine.decks[deck].cue()
     override fun onSync(deck: Int) = toggleSync(deck)
     override fun onTap(deck: Int) = tapTempo(deck)
@@ -623,6 +680,7 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         scanFolder(uri)
     }
 
+
     private fun scanFolder(uri: Uri) {
         libraryPathLabel.text = "Scanning…"
         work.execute {
@@ -838,6 +896,19 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         0L
     }
 
+    private var autoCheckRunnable: Runnable? = null
+
+    private fun startAutoUpdateCheck() {
+        val runnable = object : Runnable {
+            override fun run() {
+                checkForUpdates(false)
+                ui.postDelayed(this, AUTO_CHECK_INTERVAL_MS)
+            }
+        }
+        autoCheckRunnable = runnable
+        ui.postDelayed(runnable, AUTO_CHECK_INTERVAL_MS)
+    }
+
     private fun checkForUpdates(manual: Boolean) {
         if (updateCheckRunning) return
         val now = System.currentTimeMillis()
@@ -845,7 +916,7 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         lastUpdateCheckMillis = now
         preferences.edit().putLong(PREF_LAST_UPDATE_CHECK, now).apply()
         updateCheckRunning = true
-        updateButton.text = "CHECKING…"
+        updateButton.text = getString(R.string.btn_update_checking)
         val current = installedVersionCode()
         work.execute {
             val info = try {
@@ -860,54 +931,69 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
             ui.post {
                 updateCheckRunning = false
                 updateInfo = info
-                resetUpdateButton()
+                versionLabel.text = getString(R.string.version_format, versionName)
                 if (info != null) {
-                    updateButton.text = "UPDATE ${info.versionName}"
-                    updateButton.backgroundTintList =
-                        ColorStateList.valueOf(getColor(R.color.accent))
-                    updateButton.setTextColor(Color.BLACK)
-                    if (manual) showUpdateDialog(info) else {
-                        toast("Update ${info.versionName} available")
+                    updateButton.apply {
+                        text = getString(R.string.btn_update_available, info.versionName)
+                        backgroundTintList = ColorStateList.valueOf(getColor(R.color.accent))
+                        setTextColor(getColor(R.color.text))
                     }
-                } else if (manual) {
-                    toast("No update found (or GitHub unreachable)")
+                    if (manual) {
+                        showUpdateDialog(info)
+                    } else {
+                        toast(getString(R.string.update_title, info.versionName))
+                    }
+                } else {
+                    resetUpdateButton()
+                    if (manual) {
+                        showNoUpdateDialog()
+                    } else {
+                        toast(UpdateChecker.lastError ?: getString(R.string.no_update_found))
+                    }
                 }
             }
         }
     }
 
-    private fun resetUpdateButton() {
-        updateButton.backgroundTintList = ColorStateList.valueOf(getColor(R.color.panel_alt))
-        updateButton.setTextColor(getColor(R.color.text))
-        updateButton.text = "CHECK UPDATES"
-    }
-
     private fun showUpdateDialog(info: UpdateChecker.UpdateInfo) {
         val notes = info.notes.take(1400).ifBlank { "Bug fixes and improvements." }
         AlertDialog.Builder(this)
-            .setTitle("Update ${info.versionName}")
-            .setMessage("A new FLX4 Pocket version is available.\n\n$notes")
-            .setPositiveButton("Download & install") { _, _ -> beginUpdate(info) }
-            .setNeutralButton("GitHub") { _, _ ->
+            .setTitle(getString(R.string.update_title, info.versionName))
+            .setMessage(getString(R.string.update_available_message, notes))
+            .setPositiveButton(getString(R.string.update_now)) { _, _ -> beginUpdate(info) }
+            .setNeutralButton(getString(R.string.open_github)) { _, _ ->
                 try {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.htmlUrl)))
                 } catch (_: Exception) {
                 }
             }
-            .setNegativeButton("Later", null)
+            .setNegativeButton(getString(R.string.update_later), null)
             .show()
+    }
+
+    private fun showNoUpdateDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_title, versionName))
+            .setMessage(UpdateChecker.lastError ?: getString(R.string.no_update_found))
+            .setPositiveButton(getString(R.string.settings_cancel), null)
+            .show()
+    }
+
+    private fun resetUpdateButton() {
+        updateButton.apply {
+            backgroundTintList = ColorStateList.valueOf(getColor(R.color.panel_alt))
+            setTextColor(getColor(R.color.text))
+            text = getString(R.string.btn_check_updates)
+        }
     }
 
     private fun beginUpdate(info: UpdateChecker.UpdateInfo) {
         if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
             pendingUpdateInfo = info
             AlertDialog.Builder(this)
-                .setTitle("Allow app installs")
-                .setMessage(
-                    "Android must allow FLX4 Pocket to install its own updates. " +
-                        "Enable \"Allow from this source\", then tap the update button again."
-                )
-                .setPositiveButton("Open settings") { _, _ ->
+                .setTitle(getString(R.string.allow_installs_title))
+                .setMessage(getString(R.string.allow_installs_message))
+                .setPositiveButton(getString(R.string.settings_open)) { _, _ ->
                     try {
                         startActivity(
                             Intent(
@@ -916,19 +1002,19 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
                             )
                         )
                     } catch (e: Exception) {
-                        toast("Could not open settings: ${e.message}")
+                        toast(getString(R.string.settings_open) + ": ${e.message}")
                     }
                 }
-                .setNegativeButton("Cancel") { _, _ -> pendingUpdateInfo = null }
+                .setNegativeButton(getString(R.string.settings_cancel)) { _, _ -> pendingUpdateInfo = null }
                 .show()
             return
         }
 
         downloadCancelled = false
         val progress = AlertDialog.Builder(this)
-            .setTitle("Downloading ${info.versionName}")
+            .setTitle(getString(R.string.downloading_title, info.versionName))
             .setMessage("0%")
-            .setNegativeButton("Cancel") { _, _ -> downloadCancelled = true }
+            .setNegativeButton(getString(R.string.settings_cancel)) { _, _ -> downloadCancelled = true }
             .setCancelable(false)
             .create()
         activeUpdateDialog = progress
@@ -951,12 +1037,12 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
                     activeUpdateDialog = null
                     try {
                         UpdateInstaller.install(this, apk)
-                        toast("Confirm the installation in the Android dialog")
+                        toast(getString(R.string.installing_confirm))
                     } catch (e: Exception) {
                         AlertDialog.Builder(this)
-                            .setTitle("Cannot install the update")
-                            .setMessage(e.message ?: "Unknown error")
-                            .setPositiveButton("OK", null)
+                            .setTitle(getString(R.string.install_failed))
+                            .setMessage(e.message ?: getString(R.string.no_update_found))
+                            .setPositiveButton(getString(R.string.settings_cancel), null)
                             .show()
                     }
                 }
@@ -966,9 +1052,9 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
                     activeUpdateDialog = null
                     if (!downloadCancelled) {
                         AlertDialog.Builder(this)
-                            .setTitle("Update download failed")
-                            .setMessage(e.message ?: "Unknown error")
-                            .setPositiveButton("OK", null)
+                            .setTitle(getString(R.string.download_failed))
+                            .setMessage(e.message ?: getString(R.string.no_update_found))
+                            .setPositiveButton(getString(R.string.settings_cancel), null)
                             .show()
                     }
                     downloadCancelled = false
@@ -988,6 +1074,7 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         private const val PREF_SPLIT = "split_cue"
         private const val PREF_LAST_UPDATE_CHECK = "last_update_check"
         private const val UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000L
+        private const val AUTO_CHECK_INTERVAL_MS = 30 * 60 * 1000L
         private val JUMP_OFFSETS = doubleArrayOf(-1.0, 1.0, -2.0, 2.0, -4.0, 4.0, -8.0, 8.0)
     }
 }

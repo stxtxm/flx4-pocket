@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.2 — 2026-11-23
+
+Standalone-first install: the in-app updater works on Pixel 9a again, play
+works standalone, real-time spectra for both decks, bigger touch buttons,
+in-app update checks every 30 minutes while the app is open.
+
+- `PackageInstaller` result status is delivered through a mutable
+  `PendingIntent` on Android 12+; the app used to report "No update found"
+  on a Pixel 9a when the update had actually downloaded fine.
+- PLAY button gives feedback when no track is loaded, and audio errors are
+  shown in the status line.
+- New `Spectrum` FFT/band-mapping DSP with unit tests; `Deck` publishes its
+  real-time spectrum; `BeatBarView` shows it with a beat pulse.
+- Bigger touch buttons and the version label now shows the installed build.
+- `UpdateChecker.lastError` distinguishes "GitHub unreachable" from "No
+  update found".
+- Auto-update checks every 30 minutes while the app is open.
+
 ## 0.1.1 — 2026-11-23
 
 In-app updater fix. This is the recommended first install.

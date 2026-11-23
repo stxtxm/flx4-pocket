@@ -11,50 +11,59 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="42dp"
+            android:layout_height="48dp"
             android:background="@color/panel"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingEnd="4dp">
+            android:paddingStart="10dp"
+            android:paddingEnd="8dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="FLX4 POCKET"
                 android:textColor="@color/accent"
-                android:textSize="12sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/version_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:textColor="@color/text_hint"
+                android:textSize="10sp"
+                android:text="version not set" />
 
             <TextView
                 android:id="@+id/status"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="12dp"
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:text="Looking for DDJ-FLX4…"
+                android:text="Searching for DDJ-FLX4…"
                 android:textColor="@color/text_dim"
-                android:textSize="8sp" />
+                android:textSize="9sp" />
 
             <Button
                 android:id="@+id/btn_update"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="34dp"
                 android:backgroundTint="@color/panel_alt"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
                 android:minWidth="0dp"
                 android:minHeight="0dp"
                 android:text="CHECK UPDATES"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
+                android:textSize="9sp"
+                android:textColor="@color/text" />
 
             <Button
                 android:id="@+id/btn_library"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="34dp"
                 android:layout_marginStart="3dp"
                 android:backgroundTint="@color/panel_alt"
                 android:insetTop="0dp"
@@ -62,13 +71,13 @@
                 android:minWidth="0dp"
                 android:minHeight="0dp"
                 android:text="LIBRARY"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
+                android:textSize="9sp"
+                android:textColor="@color/text" />
 
             <Button
                 android:id="@+id/btn_audio"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="34dp"
                 android:layout_marginStart="3dp"
                 android:backgroundTint="@color/panel_alt"
                 android:insetTop="0dp"
@@ -76,8 +85,8 @@
                 android:minWidth="0dp"
                 android:minHeight="0dp"
                 android:text="AUDIO OUT"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
+                android:textSize="9sp"
+                android:textColor="@color/text" />
         </LinearLayout>
 
         <LinearLayout
@@ -85,7 +94,7 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:orientation="horizontal"
-            android:padding="3dp">
+            android:padding="2dp">
 
             <io.github.timotheegrollier.flx4pocket.DeckPanel
                 android:id="@+id/deck_a"
@@ -94,121 +103,121 @@
                 android:layout_weight="1" />
 
             <LinearLayout
-                android:layout_width="128dp"
+                android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
+                android:layout_marginStart="2dp"
+                android:layout_marginEnd="2dp"
                 android:background="@color/panel"
                 android:orientation="vertical"
                 android:padding="4dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:text="MIXER"
-                    android:textColor="@color/text_dim"
-                    android:textSize="9sp"
-                    android:textStyle="bold" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="MIXER"
+                android:textColor="@color/text_dim"
+                android:textSize="9sp"
+                android:textStyle="bold" />
 
-                <io.github.timotheegrollier.flx4pocket.VuView
-                    android:id="@+id/mixer_vu"
-                    android:layout_width="match_parent"
-                    android:layout_height="46dp"
-                    android:layout_marginTop="3dp" />
+            <io.github.timotheegrollier.flx4pocket.VuView
+                android:id="@+id/mixer_vu"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="3dp" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="CROSSFADER"
-                    android:textColor="@color/text_dim"
-                    android:textSize="8sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="CROSSFADER"
+                android:textColor="@color/text_dim"
+                android:textSize="8sp" />
 
-                <SeekBar
-                    android:id="@+id/mixer_crossfader"
-                    android:layout_width="match_parent"
-                    android:layout_height="26dp"
-                    android:max="1000"
-                    android:padding="0dp"
-                    android:progress="500" />
+            <SeekBar
+                android:id="@+id/mixer_crossfader"
+                android:layout_width="match_parent"
+                android:layout_height="26dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="HEADPHONE MIX"
-                    android:textColor="@color/text_dim"
-                    android:textSize="8sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="HEADPHONE MIX"
+                android:textColor="@color/text_dim"
+                android:textSize="8sp" />
 
-                <SeekBar
-                    android:id="@+id/mixer_headphone"
-                    android:layout_width="match_parent"
-                    android:layout_height="26dp"
-                    android:max="1000"
-                    android:padding="0dp"
-                    android:progress="500" />
+            <SeekBar
+                android:id="@+id/mixer_headphone"
+                android:layout_width="match_parent"
+                android:layout_height="26dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="MASTER"
-                    android:textColor="@color/text_dim"
-                    android:textSize="8sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="MASTER"
+                android:textColor="@color/text_dim"
+                android:textSize="8sp" />
 
-                <SeekBar
-                    android:id="@+id/mixer_master"
-                    android:layout_width="match_parent"
-                    android:layout_height="26dp"
-                    android:max="1000"
-                    android:padding="0dp"
-                    android:progress="800" />
+            <SeekBar
+                android:id="@+id/mixer_master"
+                android:layout_width="match_parent"
+                android:layout_height="26dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="800" />
 
-                <ToggleButton
-                    android:id="@+id/mixer_split"
-                    android:layout_width="match_parent"
-                    android:layout_height="34dp"
-                    android:layout_marginTop="4dp"
-                    android:backgroundTint="@color/panel_alt"
-                    android:textColor="@color/text"
-                    android:textOff="SPLIT CUE OFF"
-                    android:textOn="SPLIT CUE ON"
-                    android:textSize="8sp" />
+            <ToggleButton
+                android:id="@+id/mixer_split"
+                android:layout_width="match_parent"
+                android:layout_height="34dp"
+                android:layout_marginTop="4dp"
+                android:backgroundTint="@color/panel_alt"
+                android:textColor="@color/text"
+                android:textOff="SPLIT CUE OFF"
+                android:textOn="SPLIT CUE ON"
+                android:textSize="8sp" />
 
-                <Button
-                    android:id="@+id/mixer_cue_a"
-                    android:layout_width="match_parent"
-                    android:layout_height="32dp"
-                    android:layout_marginTop="3dp"
-                    android:backgroundTint="@color/panel_alt"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:minHeight="0dp"
-                    android:text="CUE A"
-                    android:textColor="@color/text"
-                    android:textSize="9sp" />
+            <Button
+                android:id="@+id/mixer_cue_a"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:layout_marginTop="3dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="CUE A"
+                android:textColor="@color/text"
+                android:textSize="9sp" />
 
-                <Button
-                    android:id="@+id/mixer_cue_b"
-                    android:layout_width="match_parent"
-                    android:layout_height="32dp"
-                    android:layout_marginTop="2dp"
-                    android:backgroundTint="@color/panel_alt"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:minHeight="0dp"
-                    android:text="CUE B"
-                    android:textColor="@color/text"
-                    android:textSize="9sp" />
+            <Button
+                android:id="@+id/mixer_cue_b"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:layout_marginTop="2dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="CUE B"
+                android:textColor="@color/text"
+                android:textSize="9sp" />
 
-                <TextView
-                    android:id="@+id/mixer_master_label"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:gravity="center"
-                    android:text="MASTER: A"
-                    android:textColor="@color/accent"
-                    android:textSize="8sp" />
+            <TextView
+                android:id="@+id/mixer_master_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:gravity="center"
+                android:text="MASTER: A"
+                android:textColor="@color/accent"
+                android:textSize="8sp" />
             </LinearLayout>
 
             <io.github.timotheegrollier.flx4pocket.DeckPanel

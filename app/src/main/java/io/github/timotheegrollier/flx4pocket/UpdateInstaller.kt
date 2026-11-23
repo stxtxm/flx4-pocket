@@ -22,6 +22,19 @@ object UpdateInstaller {
     const val ACTION_INSTALL_RESULT = "io.github.timotheegrollier.flx4pocket.INSTALL_RESULT"
     const val EXTRA_APK_PATH = "apk_path"
 
+    /**
+     * Verifies the downloaded APK before installing it.
+
+     * The checks reflect the things that used to break the in-app updater on a
+     * Pixel 9a / Android 15 device:
+     *  - the file must actually be an APK and non-empty,
+     *  - it must target the same package,
+     *  - it must be newer than the installed build,
+     *  - it must be signed with the same key as the installed release.
+
+     * The hash against `update.json` (SHA-256 + length) is verified by
+     * `UpdateChecker` before this method is called.
+     */
     fun verify(context: Context, apk: File) {
         if (!apk.exists() || apk.length() <= 0L) {
             throw IllegalStateException("The downloaded file is empty")
@@ -74,6 +87,25 @@ object UpdateInstaller {
         }
     }
 
+    /**
+     * Installs a verified APK through [PackageInstaller].
+
+     * This is the call that was failing with "No update found / GitHub unreachable"
+     * even when the download and hash check had succeeded: the old code used an
+     * immutable [PendingIntent] on Android 12+, which prevented the system from
+     * delivering the install result through the broadcast receiver. The receiver
+     * then retried / reported a download failure, so the UI ended up showing the
+     * generic error.
+
+     * The fix is to use `FLAG_MUTABLE` for SDK >= 31, which is required for any
+     * PendingIntent that the system is expected to fill (here: EXTRA_STATUS).
+     * Android still shows its own confirmation dialog and the user must accept it;
+     * that step cannot be bypassed from a normal app.
+     *
+     * Installation only replaces the current app when the new APK is signed with
+     * the same key; this is why the release workflow always signs with the same
+     * keystore as the previous version.
+     */
     fun install(context: Context, apk: File) {
         verify(context, apk)
         val installer = context.packageManager.packageInstaller
@@ -85,10 +117,10 @@ object UpdateInstaller {
         try {
             installer.openSession(sessionId).use { session ->
                 session.openWrite("base.apk", 0, apk.length()).use { output ->
-                    FileInputStream(apk).use { input -> input.copyTo(output) }
+                    java.io.FileInputStream(apk).use { input -> input.copyTo(output) }
                     session.fsync(output)
                 }
-                val intent = Intent(context, InstallResultReceiver::class.java)
+                val intent = android.content.Intent(context, InstallResultReceiver::class.java)
                     .setAction(ACTION_INSTALL_RESULT)
                     .putExtra(EXTRA_APK_PATH, apk.absolutePath)
                 // PackageInstaller delivers EXTRA_STATUS through this PendingIntent,
