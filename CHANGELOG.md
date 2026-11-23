@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 — 2026-11-23
+
+In-app updater fix. This is the recommended first install.
+
+- The `PackageInstaller` status `PendingIntent` is mutable on Android 12+, so
+  the system can deliver `EXTRA_STATUS` and the install confirmation flow
+  completes on a Pixel 9a.
+
 ## 0.1.0 — 2026-11-23
 
 First public release.

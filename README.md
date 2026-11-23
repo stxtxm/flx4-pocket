@@ -18,7 +18,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 > It does not pretend to replace rekordbox's USB audio path. Details and
 > sources: [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md).
 
-## What works in 0.1.0
+## What works in 0.1.1
 
 - Exact DDJ-FLX4 MIDI addresses for transport, tempo, jogs, channel faders,
   crossfader, trim, 3-band EQ, filters, headphone mix, browse/load, cue,
@@ -53,7 +53,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.1.0.apk
+   adb install -r FLX4-Pocket-0.1.1.apk
    ```
 3. Power the DDJ-FLX4 through its **power** USB-C port with a 5 V adapter or
    power bank. Connect the phone to the controller's **device** USB-C port.
@@ -78,7 +78,7 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.1.0.apk
+adb install -r FLX4-Pocket-0.1.1.apk
 ```
 
 ## Controller workflow

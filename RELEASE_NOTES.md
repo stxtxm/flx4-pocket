@@ -1,4 +1,4 @@
-FLX4 Pocket 0.1.0 — first public release.
+FLX4 Pocket 0.1.1 — first public release, with a working in-app updater.
 
 Two decks, one DDJ-FLX4, exact USB MIDI mapping, beat sync, EQ/filter/trim,
 crossfader, hot cues, beat loops, beat jumps, FLX4 LED feedback and a local

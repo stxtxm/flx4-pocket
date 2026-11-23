@@ -91,11 +91,16 @@ object UpdateInstaller {
                 val intent = Intent(context, InstallResultReceiver::class.java)
                     .setAction(ACTION_INSTALL_RESULT)
                     .putExtra(EXTRA_APK_PATH, apk.absolutePath)
+                // PackageInstaller delivers EXTRA_STATUS through this PendingIntent,
+                // so it must be mutable on Android 12+. The system fills the extras;
+                // an immutable one would hand the receiver an empty result.
+                val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                    if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
                 val pending = PendingIntent.getBroadcast(
                     context,
                     sessionId,
                     intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    pendingFlags
                 )
                 session.commit(pending.intentSender)
             }

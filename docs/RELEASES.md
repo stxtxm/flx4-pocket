@@ -6,11 +6,11 @@
 Both live in `app/build.gradle`:
 
 ```groovy
-versionCode 1
-versionName "0.1.0"
+versionCode 2
+versionName "0.1.1"
 ```
 
-The release tag is `v<versionName>` (for example `v0.1.0`).
+The release tag is `v<versionName>` (for example `v0.1.1`).
 
 ## Signing key
 
@@ -48,8 +48,8 @@ channel for an already installed release build, because the debug key differs.
    ```
 4. Commit, push, then create and push the tag:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.1
+   git push origin v0.1.1
    ```
 5. The **Release** workflow:
    - builds the unit tests;

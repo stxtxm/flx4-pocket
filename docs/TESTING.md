@@ -52,5 +52,5 @@ adb shell am start -n io.github.timotheegrollier.flx4pocket/.MainActivity
 adb logcat -s Flx4Midi Flx4Audio AndroidRuntime
 ```
 
-No emulator or device was attached to the environment where 0.1.0 was built, so
+No emulator or device was attached to the environment where 0.1.1 was built, so
 these hardware checks are explicitly pending.
