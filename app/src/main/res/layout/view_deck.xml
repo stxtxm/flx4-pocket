@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/panel"
+    android:orientation="vertical"
+    android:padding="5dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/deck_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="DECK A"
+            android:textColor="@color/accent_a"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/deck_bpm"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="-- BPM"
+            android:textColor="@color/text"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/deck_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Load a track"
+        android:textColor="@color/text"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/deck_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="FLX4 LOAD 1 / 2 or open the library"
+        android:textColor="@color/text_dim"
+        android:textSize="8sp" />
+
+    <io.github.timotheegrollier.flx4pocket.BeatBarView
+        android:id="@+id/deck_beat"
+        android:layout_width="match_parent"
+        android:layout_height="16dp"
+        android:layout_marginTop="2dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/deck_time"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="00:00 / 00:00"
+            android:textColor="@color/text_dim"
+            android:textSize="8sp" />
+
+        <TextView
+            android:id="@+id/deck_mode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="HOT CUE"
+            android:textColor="@color/text_dim"
+            android:textSize="8sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/deck_pad_0"
+            style="@style/PadButton"
+            android:text="1" />
+
+        <Button
+            android:id="@+id/deck_pad_1"
+            style="@style/PadButton"
+            android:text="2" />
+
+        <Button
+            android:id="@+id/deck_pad_2"
+            style="@style/PadButton"
+            android:text="3" />
+
+        <Button
+            android:id="@+id/deck_pad_3"
+            style="@style/PadButton"
+            android:text="4" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/deck_pad_4"
+            style="@style/PadButton"
+            android:text="5" />
+
+        <Button
+            android:id="@+id/deck_pad_5"
+            style="@style/PadButton"
+            android:text="6" />
+
+        <Button
+            android:id="@+id/deck_pad_6"
+            style="@style/PadButton"
+            android:text="7" />
+
+        <Button
+            android:id="@+id/deck_pad_7"
+            style="@style/PadButton"
+            android:text="8" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/deck_play"
+            style="@style/TransportButton"
+            android:text="PLAY" />
+
+        <Button
+            android:id="@+id/deck_cue"
+            style="@style/TransportButton"
+            android:text="CUE" />
+
+        <Button
+            android:id="@+id/deck_sync"
+            style="@style/TransportButton"
+            android:text="SYNC" />
+
+        <Button
+            android:id="@+id/deck_tap"
+            style="@style/TransportButton"
+            android:text="TAP" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/deck_loop_in"
+            style="@style/TransportButton"
+            android:text="IN" />
+
+        <Button
+            android:id="@+id/deck_loop_out"
+            style="@style/TransportButton"
+            android:text="OUT" />
+
+        <Button
+            android:id="@+id/deck_reloop"
+            style="@style/TransportButton"
+            android:text="RELOOP" />
+
+        <Button
+            android:id="@+id/deck_master"
+            style="@style/TransportButton"
+            android:text="MASTER" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="26dp"
+        android:layout_marginTop="2dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="42dp"
+            android:layout_height="wrap_content"
+            android:text="TEMPO"
+            android:textColor="@color/text_dim"
+            android:textSize="8sp" />
+
+        <SeekBar
+            android:id="@+id/deck_tempo"
+            android:layout_width="0dp"
+            android:layout_height="24dp"
+            android:layout_weight="1"
+            android:max="1000"
+            android:padding="0dp"
+            android:progress="500" />
+
+        <TextView
+            android:id="@+id/deck_pitch"
+            android:layout_width="42dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="0.0%"
+            android:textColor="@color/text_dim"
+            android:textSize="8sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/MiniLabel"
+                android:text="VOL" />
+
+            <SeekBar
+                android:id="@+id/deck_volume"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="800" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/MiniLabel"
+                android:text="TRIM" />
+
+            <SeekBar
+                android:id="@+id/deck_trim"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/MiniLabel"
+                android:text="FILTER" />
+
+            <SeekBar
+                android:id="@+id/deck_filter"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/MiniLabel"
+                android:text="HI" />
+
+            <SeekBar
+                android:id="@+id/deck_eq_hi"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/MiniLabel"
+                android:text="MID" />
+
+            <SeekBar
+                android:id="@+id/deck_eq_mid"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/MiniLabel"
+                android:text="LOW" />
+
+            <SeekBar
+                android:id="@+id/deck_eq_low"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="1000"
+                android:padding="0dp"
+                android:progress="500" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

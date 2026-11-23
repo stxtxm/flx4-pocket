@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:background="@color/panel"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FLX4 POCKET"
+                android:textColor="@color/accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/status"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Looking for DDJ-FLX4…"
+                android:textColor="@color/text_dim"
+                android:textSize="8sp" />
+
+            <Button
+                android:id="@+id/btn_update"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:text="CHECK UPDATES"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+
+            <Button
+                android:id="@+id/btn_library"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="3dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:text="LIBRARY"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+
+            <Button
+                android:id="@+id/btn_audio"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="3dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:text="AUDIO OUT"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:padding="3dp">
+
+            <io.github.timotheegrollier.flx4pocket.DeckPanel
+                android:id="@+id/deck_a"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+
+            <LinearLayout
+                android:layout_width="128dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
+                android:background="@color/panel"
+                android:orientation="vertical"
+                android:padding="4dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="MIXER"
+                    android:textColor="@color/text_dim"
+                    android:textSize="9sp"
+                    android:textStyle="bold" />
+
+                <io.github.timotheegrollier.flx4pocket.VuView
+                    android:id="@+id/mixer_vu"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:layout_marginTop="3dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="CROSSFADER"
+                    android:textColor="@color/text_dim"
+                    android:textSize="8sp" />
+
+                <SeekBar
+                    android:id="@+id/mixer_crossfader"
+                    android:layout_width="match_parent"
+                    android:layout_height="26dp"
+                    android:max="1000"
+                    android:padding="0dp"
+                    android:progress="500" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="HEADPHONE MIX"
+                    android:textColor="@color/text_dim"
+                    android:textSize="8sp" />
+
+                <SeekBar
+                    android:id="@+id/mixer_headphone"
+                    android:layout_width="match_parent"
+                    android:layout_height="26dp"
+                    android:max="1000"
+                    android:padding="0dp"
+                    android:progress="500" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="MASTER"
+                    android:textColor="@color/text_dim"
+                    android:textSize="8sp" />
+
+                <SeekBar
+                    android:id="@+id/mixer_master"
+                    android:layout_width="match_parent"
+                    android:layout_height="26dp"
+                    android:max="1000"
+                    android:padding="0dp"
+                    android:progress="800" />
+
+                <ToggleButton
+                    android:id="@+id/mixer_split"
+                    android:layout_width="match_parent"
+                    android:layout_height="34dp"
+                    android:layout_marginTop="4dp"
+                    android:backgroundTint="@color/panel_alt"
+                    android:textColor="@color/text"
+                    android:textOff="SPLIT CUE OFF"
+                    android:textOn="SPLIT CUE ON"
+                    android:textSize="8sp" />
+
+                <Button
+                    android:id="@+id/mixer_cue_a"
+                    android:layout_width="match_parent"
+                    android:layout_height="32dp"
+                    android:layout_marginTop="3dp"
+                    android:backgroundTint="@color/panel_alt"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="CUE A"
+                    android:textColor="@color/text"
+                    android:textSize="9sp" />
+
+                <Button
+                    android:id="@+id/mixer_cue_b"
+                    android:layout_width="match_parent"
+                    android:layout_height="32dp"
+                    android:layout_marginTop="2dp"
+                    android:backgroundTint="@color/panel_alt"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="CUE B"
+                    android:textColor="@color/text"
+                    android:textSize="9sp" />
+
+                <TextView
+                    android:id="@+id/mixer_master_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:gravity="center"
+                    android:text="MASTER: A"
+                    android:textColor="@color/accent"
+                    android:textSize="8sp" />
+            </LinearLayout>
+
+            <io.github.timotheegrollier.flx4pocket.DeckPanel
+                android:id="@+id/deck_b"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/library_panel"
+        android:layout_width="380dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@color/panel"
+        android:elevation="12dp"
+        android:orientation="vertical"
+        android:padding="6dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="LIBRARY"
+                android:textColor="@color/text"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/library_folder"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="FOLDER"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+
+            <Button
+                android:id="@+id/library_close"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="3dp"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="X"
+                android:textColor="@color/text"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/library_path"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="middle"
+            android:maxLines="1"
+            android:text="Choose a music folder"
+            android:textColor="@color/text_dim"
+            android:textSize="8sp" />
+
+        <ListView
+            android:id="@+id/library_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="3dp"
+            android:layout_weight="1"
+            android:background="@color/panel_alt"
+            android:divider="@color/line"
+            android:dividerHeight="1dp"
+            android:fastScrollEnabled="true" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/library_target"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="TARGET A"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+
+            <Button
+                android:id="@+id/library_load_a"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="LOAD A"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+
+            <Button
+                android:id="@+id/library_load_b"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1"
+                android:backgroundTint="@color/panel_alt"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="0dp"
+                android:text="LOAD B"
+                android:textColor="@color/text"
+                android:textSize="8sp" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

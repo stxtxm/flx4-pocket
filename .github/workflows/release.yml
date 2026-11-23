@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            mkdir -p keystore
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > keystore/release.jks
+            {
+              echo "ANDROID_KEYSTORE_FILE=$PWD/keystore/release.jks"
+              echo "ANDROID_STORE_PASSWORD=$STORE_PASSWORD"
+              echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+              echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No signing secrets; the workflow will publish a debug build."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build signed release
+        if: steps.signing.outputs.signed == 'true'
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Build debug fallback
+        if: steps.signing.outputs.signed != 'true'
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Package release assets
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          VERSION=$(grep -oP 'versionName "\K[^"]+' app/build.gradle | head -1)
+          CODE=$(grep -oP 'versionCode \K[0-9]+' app/build.gradle | head -1)
+          if [ "$SIGNED" = "true" ]; then
+            SRC="app/build/outputs/apk/release/app-release.apk"
+          else
+            SRC="app/build/outputs/apk/debug/app-debug.apk"
+          fi
+          mkdir -p dist
+          APK="FLX4-Pocket-$VERSION.apk"
+          cp "$SRC" "dist/$APK"
+          SHA=$(sha256sum "dist/$APK" | cut -d' ' -f1)
+          echo "$SHA  $APK" > "dist/$APK.sha256"
+          VERSION="$VERSION" CODE="$CODE" SHA="$SHA" APK="$APK" python3 - <<'PY'
+          import json, os
+          notes = open("RELEASE_NOTES.md", encoding="utf-8").read().strip()
+          data = {
+              "versionCode": int(os.environ["CODE"]),
+              "versionName": os.environ["VERSION"],
+              "apk": os.environ["APK"],
+              "sha256": os.environ["SHA"],
+              "notes": notes,
+          }
+          with open("dist/update.json", "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write("\n")
+          PY
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          TAG="${TAG_NAME:-v$VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "FLX4 Pocket $VERSION" \
+              --notes-file RELEASE_NOTES.md
+          fi

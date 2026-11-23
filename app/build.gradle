@@ -1,0 +1,69 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'io.github.timotheegrollier.flx4pocket'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "io.github.timotheegrollier.flx4pocket"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        // Used by the in-app updater and by the release workflow.
+        buildConfigField "String", "UPDATE_OWNER", '"stxtxm"'
+        buildConfigField "String", "UPDATE_REPO", '"flx4-pocket"'
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // CI supplies these from repository secrets. Without them, release builds
+    // are unsigned and the workflow publishes the debug APK instead.
+    def keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+    signingConfigs {
+        release {
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("ANDROID_STORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ""
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (keystorePath) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
