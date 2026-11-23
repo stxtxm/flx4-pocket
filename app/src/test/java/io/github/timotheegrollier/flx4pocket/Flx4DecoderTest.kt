@@ -69,8 +69,8 @@ class Flx4DecoderTest {
     fun `loop section`() {
         assertEquals(listOf("button 0 LOOP_IN true"), send(0x90, 0x10, 0x7F))
         assertEquals(listOf("button 0 LOOP_OUT true"), send(0x90, 0x11, 0x7F))
-        assertEquals(listOf("button 1 RELOOP true"), send(0x91, 0x4D, 0x7F))
-        assertEquals(listOf("button 1 RELOOP_STOP true"), send(0x91, 0x50, 0x7F))
+        assertEquals(listOf("button 1 FOUR_BEAT_EXIT true"), send(0x91, 0x4D, 0x7F))
+        assertEquals(listOf("button 1 ACTIVE_LOOP true"), send(0x91, 0x50, 0x7F))
         assertEquals(listOf("button 0 LOOP_HALVE true"), send(0x90, 0x51, 0x7F))
         assertEquals(listOf("button 0 LOOP_DOUBLE true"), send(0x90, 0x53, 0x7F))
         assertEquals(listOf("button 0 JUMP_BACK true"), send(0x90, 0x3E, 0x7F))

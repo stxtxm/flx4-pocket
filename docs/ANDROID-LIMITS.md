@@ -3,29 +3,29 @@
 This document exists so nobody buys or plugs in hardware expecting something the
 platform cannot deliver. The app is deliberately honest about the following.
 
-## 1. The FLX4 is not powered by the phone
+## 1. Powering the FLX4 from the phone
 
-The DDJ-FLX4 has two USB-C ports: one for power and one for the device
-connection. Pioneer's product page for smartphone use says to connect a USB
-power adapter or mobile battery to the controller for power, then connect the
-phone to the controller's device USB-C port. The controller's current draw is
-not something a phone's OTG port should be expected to supply.
-
-For a Pixel 9a setup:
+The DDJ-FLX4 runs on USB bus power (5 V, 500 mA) from the port it is
+connected to, so one USB-C cable from the phone to its **device** port can be
+enough: it works from a Pixel 9a. Pioneer's manual lists when bus power is not
+enough: a host port that supplies too little current, headphones under 32 Ω,
+or a mono jack in the headphones output. Pioneer also offers the **power**
+port for mobile devices: a USB power adapter or a power bank without a
+power-saving mode.
 
 ```text
-5 V USB-C power adapter ──► FLX4 power port
-Pixel 9a ────────────────► FLX4 device port (USB-C data)
+Pixel 9a ──────────────────► FLX4 device port (USB-C data, and power)
+optional 5 V supply ───────► FLX4 power port (long sets, low-impedance headphones)
 FLX4 master RCA / headphones ──► speakers / headphones
 ```
 
-The app cannot influence this: if the controller's lights do not come on, or
-it disconnects when the jog LEDs light up, it is not getting enough current.
-A powered USB-C hub can also work if it provides enough power, but the simplest
-reliable setup is the dedicated power port. A USB-A charger with a USB-A to
-USB-C cable is fine for the power port if the controller accepts that cable.
+The app cannot change the current a phone supplies. If the controller's
+lights do not come on, or it disconnects when its LEDs light up or the
+headphones get loud, use the power port. Powering the controller also drains
+the phone's battery faster.
 
-Source: <https://www.pioneerdj.com/product/dj-controllers/ddj-flx4>
+Source: DDJ-FLX4 operating instructions, "Connections"
+(<https://www.pioneerdj.com/product/dj-controllers/ddj-flx4>).
 
 ## 2. USB audio through the FLX4 depends on the phone
 
@@ -83,6 +83,12 @@ message produced by its own signature pre-check. Never publish a release from a
 different key under the same application id.
 
 ## 5. Audio quality and timing
+
+- Latency: the mixer starts with a buffer of two blocks (12 ms) and adds a
+  block after each underrun, so it settles on the smallest buffer the output
+  takes without glitches. What the output adds on top (Android's mixer, the USB
+  or Bluetooth link) is outside the app; the status line shows the total the
+  phone reports. Bluetooth adds 100 ms or more and is not usable to mix.
 
 - Without KEY, tempo changes are a resampling read: pitch follows speed, like
   vinyl. With KEY the deck time-stretches (WSOLA): clean within the usual

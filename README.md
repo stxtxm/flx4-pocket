@@ -14,21 +14,24 @@ Beat FX and a crossfader.
 
 Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
-> **Status: not yet verified on hardware.** Everything here is covered by JVM
-> tests (DSP, deck logic, the MIDI address table, the real screen under
-> Robolectric), but no phone or controller was available where 0.3.0 was
-> built. See [docs/TESTING.md](docs/TESTING.md) for what must be checked on a
-> device, and [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for what Android
-> itself may refuse (controller power, four-channel USB audio).
+> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 changes
+> (loops, latency, folding panels) are covered by JVM tests (DSP, deck logic,
+> the MIDI address table, the real screen under Robolectric) but not yet by a
+> hardware check. See [docs/TESTING.md](docs/TESTING.md) for what must be
+> checked on a device, and [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for
+> what Android itself may refuse (four-channel USB audio, latency).
 
-## What is in 0.3.0
+## What is in 0.4.0
 
 **Mixing from the phone**
 
-- Two stacked, scrolling three-band waveforms (bass / mids / highs) with the
-  beat grid, loop region, cue point and hot cues. Drag a waveform to scratch or
-  position the track, pinch to zoom; both decks share the zoom so their beats
-  can be lined up by eye.
+- Two stacked, scrolling three-band waveforms (bass / mids / highs) at the top
+  of the screen, with the beat grid, loop region, cue point and hot cues. Drag
+  a waveform to scratch or position the track, pinch to zoom; both decks share
+  the zoom so their beats can be lined up by eye.
+- **DECK A**, **MIXER** and **DECK B** (under the waveforms) fold their panel
+  away; the others widen to fill the space, and with all three folded the
+  waveforms take the whole screen. The choice is remembered.
 - Track overview per deck with needle search.
 - Eight pads per deck in five modes: Hot Cue, Beat Loop, Beat Jump, Pad FX 1
   (echoes and slip loop rolls) and Pad FX 2 (low-cut echo, reverb, flanger,
@@ -37,7 +40,16 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   pitch-bend buttons, tempo fader with ±6 / ±10 / ±16 % / WIDE ranges, TAP.
 - KEY (keylock): the tempo changes, the pitch does not (WSOLA time-stretch).
 - A synced deck follows the master's tempo when it moves.
-- Loop IN / OUT / RELOOP, halve / double, quantize.
+- Loops as rekordbox plays them on the FLX4: IN, OUT, 4 BEAT / EXIT, halve /
+  double, beat loops of 1/4 to 32 beats. With quantize (Q) the points snap to
+  the grid; a loop never knocks the deck off the beat (closing it late wraps
+  back to the same place in the beat, a loop pressed just before a beat starts
+  on it), and the loop seam crossfades instead of clicking. IN or OUT during a
+  loop selects that point (it blinks): the jog, or a drag on the waveform,
+  moves it until the button is pressed again.
+- Low latency: PLAY, the loop buttons, TAP and FX ON act when the finger
+  lands, and the audio buffer is tuned down to the smallest the output takes
+  without glitches. The status line shows the measured output latency.
 - Mixer: trim, three-band EQ (-26 / +6 dB, like a DJM), filter, channel faders
   with level meters, equal-power crossfader, headphone cue buttons, master
   peak limiter. Faders are ramped (no zipper noise) and pitched audio uses
@@ -72,7 +84,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
 **Updates**
 
-- The version button in the top bar checks GitHub Releases in the background,
+- The version button (bar under the waveforms) checks GitHub Releases in the background,
   downloads with progress on the button while you keep mixing, and installs
   only when you tap INSTALL. Every APK is checked (SHA-256, package, version,
   signing certificate) before Android's installer is opened.
@@ -88,22 +100,21 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.3.0.apk
+   adb install -r FLX4-Pocket-0.4.0.apk
    ```
 3. Open FLX4 Pocket, tap **FOLDER** in the library and pick your music
    folder. Tap an empty deck, then a track, to load it there; **DECK A** and
    **DECK B** on each track load it on either deck.
-4. Optional: connect the DDJ-FLX4. Power it through its **power** USB-C port
-   (5 V adapter or power bank) and connect the phone to its **device** USB-C
-   port. The status line turns green and shows which output is in use. Turn
-   the phone's media volume all the way up: Android scales the USB output by
-   it. Set the level with the FLX4's MASTER LEVEL knob.
+4. Optional: connect the phone to the DDJ-FLX4's **device** USB-C port. The
+   phone can power the controller on its own (USB bus power, 5 V 500 mA); if
+   it does not light up or cuts out, also plug a USB power supply or power
+   bank into its **power** port. The status line turns green and shows which
+   output is in use. Turn the phone's media volume all the way up: Android
+   scales the USB output by it. Set the level with the FLX4's MASTER LEVEL
+   knob.
 5. **AUDIO** lists the outputs and holds the master / headphones levels. On a
    stereo-only output, **Split cue** sends the master left and the headphones
    right for a splitter cable.
-
-Pioneer documents the separate power port for phones; a phone's USB port is
-not guaranteed to power the controller.
 
 ### Do not open the APK on Fedora/GNOME
 
@@ -116,7 +127,7 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.3.0.apk
+adb install -r FLX4-Pocket-0.4.0.apk
 ```
 
 ## Controller workflow
@@ -136,7 +147,9 @@ adb install -r FLX4-Pocket-0.3.0.apk
 | Headphones CUE, MASTER CUE, mix, level | Headphone bus |
 | MASTER LEVEL | Master gain |
 | BEAT FX select, beat ◄ ►, CH select, level/depth, ON/OFF | Beat FX |
-| IN / OUT / RELOOP-EXIT | Manual loop; hold IN for a 4-beat loop |
+| IN / OUT | Loop in / loop out (the loop starts). During a loop: select that point, the jog moves it, press again to finish |
+| 4 BEAT/EXIT | 4-beat loop from here / leave the loop |
+| SHIFT + 4 BEAT/EXIT | Turn the last loop back on (active loop), in phase |
 | CUE/LOOP CALL ◄ ► | Halve / double the loop; with SHIFT jump 16 beats |
 | HOT CUE, PAD FX1/2, BEAT JUMP, BEAT LOOP + pads | Pad modes |
 | SHIFT + hot-cue pad | Delete the hot cue |

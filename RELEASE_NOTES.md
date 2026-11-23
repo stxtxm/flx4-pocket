@@ -1,22 +1,14 @@
-FLX4 Pocket 0.3.0
+FLX4 Pocket 0.4.0
 
-Keylock, gap-free hot cues, background playback, faster loading and a
-cleaner sound.
+Waveforms first, loops that stay on the beat, less delay.
 
-- KEY on a deck: the tempo changes, the pitch does not.
-- Hot cues, loops and jumps play at once, without gaps or clicks, a few
-  seconds after a track is loaded (the whole track is kept in memory).
-- The mix keeps playing with the screen off or another app in front.
-- A playing deck refuses a new track: pause it first.
-- Tap an empty deck (or its PLAY) to open the library for it, then tap a
-  track to load it there. The waveforms stay visible while you browse.
-- FLX4: the app picks up every fader and knob position when the controller is
-  plugged in. The tempo fader takes over smoothly (follow the arrow next to
-  the pitch). LOAD opens the library first if it is closed.
-- Sync follows the master deck's tempo when it moves.
-- Sound: a master limiter instead of clipping, smooth faders and cuts,
-  clearer highs when pitched, EQ range -26 / +6 dB; notifications no longer
-  lower the master.
-
-Not yet verified on a real phone or controller. Turn the phone's media volume
-all the way up when the FLX4 is connected.
+- The bar above the waveforms is gone, and nothing covers them any more.
+- DECK A, MIXER and DECK B (under the waveforms) fold their panel away. With
+  all three folded, the waveforms fill the screen. The app remembers it.
+- FLX4 loops as in rekordbox: 4 BEAT/EXIT starts a 4-beat loop or exits it,
+  SHIFT + 4 BEAT/EXIT turns the last loop back on, and IN or OUT during a loop
+  lets the jog move that point (the button blinks).
+- Loops stay on the beat and no longer click at the seam.
+- Less delay between a fader or a button and the sound. On-screen PLAY, loop
+  buttons, TAP and FX ON act as soon as you touch them. The status line shows
+  the delay in ms.

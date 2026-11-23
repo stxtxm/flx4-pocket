@@ -2,6 +2,7 @@ package io.github.timotheegrollier.flx4pocket
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -153,15 +154,16 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         }
         pads.forEachIndexed { i, pad -> pad.setOnTouchListener { view, event -> onPadTouch(view, i, event) } }
 
-        loopIn.setOnClickListener { deck.setLoopIn() }
-        loopOut.setOnClickListener { deck.setLoopOut() }
-        reloop.setOnClickListener { deck.toggleLoop() }
-        findViewById<View>(R.id.deck_loop_half).setOnClickListener { deck.scaleLoop(0.5) }
-        findViewById<View>(R.id.deck_loop_double).setOnClickListener { deck.scaleLoop(2.0) }
+        // Timing buttons act when the finger lands, like the hardware ones.
+        loopIn.onPress { deck.setLoopIn() }
+        loopOut.onPress { deck.setLoopOut() }
+        reloop.onPress { deck.fourBeatLoopOrExit() }
+        findViewById<View>(R.id.deck_loop_half).onPress { deck.scaleLoop(0.5) }
+        findViewById<View>(R.id.deck_loop_double).onPress { deck.scaleLoop(2.0) }
         quantize.setOnClickListener { deck.quantize = !deck.quantize }
-        findViewById<View>(R.id.deck_tap).setOnClickListener { host.onTap(index) }
+        findViewById<View>(R.id.deck_tap).onPress { host.onTap(index) }
 
-        play.setOnClickListener { host.onPlay(index) }
+        play.onPress { host.onPlay(index) }
         sync.setOnClickListener { host.onSync(index) }
         sync.setOnLongClickListener {
             host.onMaster(index)
@@ -280,8 +282,11 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         style(cue, hasTrack && !deck.playing)
         style(sync, deck.syncEnabled)
         style(pfl, deck.cueEnabled)
-        style(loopIn, deck.loopInSec >= 0.0)
-        style(loopOut, deck.loopActive)
+        // IN or OUT blinks while the jog (or a drag on the waveform) moves its loop point.
+        val blink = SystemClock.uptimeMillis() / 250 % 2 == 0L
+        style(loopIn, if (deck.loopAdjust == Deck.ADJUST_IN) blink else deck.loopInSec >= 0.0)
+        style(loopOut, if (deck.loopAdjust == Deck.ADJUST_OUT) blink else deck.loopActive)
+        reloop.show(if (deck.loopActive) "EXIT" else "4 BEAT")
         style(reloop, deck.loopActive)
         style(quantize, deck.quantize)
 

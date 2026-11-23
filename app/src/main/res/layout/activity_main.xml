@@ -9,28 +9,60 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Top bar -->
+        <!-- Scrolling waveforms, stacked so the beats of both decks line up. They
+             own the top of the screen and grow when the panels below fold away. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <include
+                android:id="@+id/wave_a"
+                layout="@layout/view_wave" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/bg" />
+
+            <include
+                android:id="@+id/wave_b"
+                layout="@layout/view_wave" />
+        </LinearLayout>
+
+        <!-- Panel toggles in the order of the panels below, then the app controls. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="36dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingEnd="4dp">
+            android:paddingStart="2dp"
+            android:paddingEnd="2dp">
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="FLX4 POCKET"
-                android:textColor="@color/text"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:id="@+id/toggle_deck_a"
+                style="@style/Btn.Wrap"
+                android:contentDescription="Deck A controls"
+                android:text="DECK A" />
+
+            <TextView
+                android:id="@+id/toggle_mixer"
+                style="@style/Btn.Wrap"
+                android:contentDescription="Mixer controls"
+                android:text="MIXER" />
+
+            <TextView
+                android:id="@+id/toggle_deck_b"
+                style="@style/Btn.Wrap"
+                android:contentDescription="Deck B controls"
+                android:text="DECK B" />
 
             <TextView
                 android:id="@+id/status"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="10dp"
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
@@ -39,8 +71,9 @@
 
             <io.github.timotheegrollier.flx4pocket.VuView
                 android:id="@+id/master_vu"
-                android:layout_width="72dp"
+                android:layout_width="64dp"
                 android:layout_height="5dp"
+                android:layout_marginStart="8dp"
                 android:layout_marginEnd="8dp"
                 android:contentDescription="Master level" />
 
@@ -59,32 +92,14 @@
                 style="@style/Btn.Wrap" />
         </LinearLayout>
 
-        <!-- Scrolling waveforms, stacked so the beats of both decks line up -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="124dp"
-            android:orientation="vertical">
-
-            <include
-                android:id="@+id/wave_a"
-                layout="@layout/view_wave" />
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="@color/bg" />
-
-            <include
-                android:id="@+id/wave_b"
-                layout="@layout/view_wave" />
-        </LinearLayout>
-
-        <!-- Deck A | mixer | Deck B; the library opens over this part only, so
-             both waveforms and their remaining time stay in sight while browsing. -->
+        <!-- Deck A | mixer | Deck B, each folding away from its toggle above; the
+             library opens over this part only, so the waveforms stay in sight. Gone
+             when every panel is folded and the library closed. -->
         <FrameLayout
+            android:id="@+id/panels"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="2">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -99,10 +114,12 @@
                 android:layout_weight="1" />
 
             <LinearLayout
-                android:layout_width="300dp"
+                android:id="@+id/mixer"
+                android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
+                android:layout_weight="1"
                 android:orientation="vertical">
 
                 <LinearLayout

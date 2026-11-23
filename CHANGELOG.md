@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.4.0
+
+Waveforms first, loops that stay on the beat, and a shorter delay between a
+move and the sound.
+
+### Added
+
+- DECK A, MIXER and DECK B, under the waveforms, fold their panel away; the
+  others widen, and with all three folded the waveforms fill the screen. The
+  library still opens where the panels were. The choice is remembered.
+- Loop point adjust, as in rekordbox: IN or OUT during a loop selects that
+  point (its LED and on-screen button blink) and the jog, or a drag on the
+  waveform, moves it until the button is pressed again.
+- The status line shows the output latency Android reports.
+
+### Changed
+
+- The bar above the waveforms is gone: its status, master meter, LIBRARY,
+  AUDIO and version buttons moved to the bar under the waveforms, and the
+  track information sits on the waveform without the dark band that hid it.
+- FLX4 loop section mapped as in rekordbox: 4 BEAT/EXIT starts a 4-beat loop
+  or exits the loop (it used to re-enter the last loop); SHIFT + 4 BEAT/EXIT
+  turns the last loop back on (it used to exit and pause); holding IN no
+  longer starts a 4-beat loop. The on-screen LOOP button became 4 BEAT / EXIT.
+- Loops never leave the beat: OUT pressed a little late wraps back to the
+  same place in the beat instead of the loop start; a 4-beat or beat loop
+  pressed just before a beat starts on that beat; loops under a beat snap to
+  the nearest step; halving under the playhead wraps in phase; turning a loop
+  back on no longer jumps to its start.
+- Latency: the audio buffer starts at two blocks (12 ms) and grows only after
+  an underrun; it used to stay at twice Android's minimum. PLAY, IN, OUT,
+  4 BEAT, halve / double, TAP and FX ON act when the finger lands, not when it
+  lifts.
+- The mixer shares the width with the decks instead of a fixed 300 dp, and
+  the waveforms keep a third of the height on any screen.
+
+### Fixed
+
+- The loop seam clicked; it now crossfades over 3 ms, like jumps. A jump made
+  at a loop end crossfades with what follows the loop instead of with itself.
+
+### Documentation
+
+- The FLX4 can run from the phone's USB-C port (bus power); its power port is
+  optional (`docs/ANDROID-LIMITS.md`).
+
 ## 0.3.0
 
 Faster loading, keylock, gap-free hot cues, background playback, a

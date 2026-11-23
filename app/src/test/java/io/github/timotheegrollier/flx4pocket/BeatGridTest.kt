@@ -11,7 +11,6 @@ class BeatGridTest {
         assertEquals(0.0, grid.phase(0.0), 1e-9)
         assertEquals(0.5, grid.phase(0.25), 1e-9)
         assertEquals(0.0, grid.phase(0.5), 1e-9)
-        assertEquals(4, grid.beatIndex(2.0))
         assertEquals(0.5, grid.secondsPerBeat(), 1e-9)
     }
 

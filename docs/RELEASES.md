@@ -76,7 +76,7 @@ certificate before opening Android's installer.
 
 ## In-app update flow
 
-Everything happens on the version button in the top bar (`UpdateUi`):
+Everything happens on the version button in the bar under the waveforms (`UpdateUi`):
 
 | Button shows | Meaning | Tap |
 | --- | --- | --- |

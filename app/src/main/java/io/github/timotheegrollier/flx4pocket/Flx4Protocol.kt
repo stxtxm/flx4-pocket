@@ -3,7 +3,7 @@ package io.github.timotheegrollier.flx4pocket
 /** Buttons of the DDJ-FLX4. Global ones are reported with deck `-1`. */
 enum class Flx4Button {
     PLAY, CUE, TO_START, SHIFT, SYNC, MASTER, TEMPO_RANGE,
-    LOOP_IN, LOOP_OUT, RELOOP, RELOOP_STOP, LOOP_HALVE, LOOP_DOUBLE,
+    LOOP_IN, LOOP_OUT, FOUR_BEAT_EXIT, ACTIVE_LOOP, LOOP_HALVE, LOOP_DOUBLE,
     JUMP_BACK, JUMP_FORWARD, PFL, QUANTIZE, JOG_TOUCH, LOAD,
 
     /** Beat FX channel selector: `deck` is the channel, `down` its state. */
@@ -150,8 +150,8 @@ class Flx4Decoder(private val listener: Flx4Listener) {
             MidiMap.NOTE_TEMPO_RANGE -> Flx4Button.TEMPO_RANGE
             MidiMap.NOTE_LOOP_IN -> Flx4Button.LOOP_IN
             MidiMap.NOTE_LOOP_OUT -> Flx4Button.LOOP_OUT
-            MidiMap.NOTE_RELOOP -> Flx4Button.RELOOP
-            MidiMap.NOTE_RELOOP_STOP -> Flx4Button.RELOOP_STOP
+            MidiMap.NOTE_FOUR_BEAT_EXIT -> Flx4Button.FOUR_BEAT_EXIT
+            MidiMap.NOTE_ACTIVE_LOOP -> Flx4Button.ACTIVE_LOOP
             MidiMap.NOTE_LOOP_HALVE -> Flx4Button.LOOP_HALVE
             MidiMap.NOTE_LOOP_DOUBLE -> Flx4Button.LOOP_DOUBLE
             MidiMap.NOTE_JUMP_BACK -> Flx4Button.JUMP_BACK

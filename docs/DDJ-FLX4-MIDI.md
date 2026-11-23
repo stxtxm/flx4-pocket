@@ -4,8 +4,11 @@ The app uses the DDJ-FLX4's native USB MIDI map. Addresses come from Pioneer
 DJ's **DDJ-FLX4 MIDI message list** and the **Mixxx Pioneer-DDJ-FLX4** mapping;
 the Smart CFX, master cue, master / headphone level and Pad FX pad addresses,
 which Mixxx does not use, come from the official list as documented (with
-hardware captures) by the pajoniiir project. `Flx4DecoderTest` asserts every
-row marked "yes" below.
+hardware captures) by the pajoniiir project. The loop section behaves as
+Pioneer's rekordbox hardware diagram and manual describe it (IN, OUT,
+4 BEAT/EXIT, CUE/LOOP CALL), not as the Mixxx mapping, which reuses the
+DDJ-400's RELOOP/EXIT layout. `Flx4DecoderTest` asserts every row marked
+"yes" below.
 
 Channels are shown 1-based (the code stores them 0-based). Buttons are Note On
 with velocity `0x7F` for press and `0x00` for release. Faders and knobs are
@@ -27,11 +30,11 @@ Status bytes: deck 1 `0x90`/`0xB0`, deck 2 `0x91`/`0xB1`, Beat FX
 | BEAT SYNC | Note | `0x58` | Sync tempo and phase to the other deck, or release | yes |
 | BEAT SYNC long press | Note | `0x5C` | Make this deck the sync master | yes |
 | SHIFT + BEAT SYNC | Note | `0x60` | Cycle tempo range ±6 / ±10 / ±16 % / WIDE | yes |
-| IN / 4 BEAT | Note | `0x10` | Loop in; held for 0.5 s: 4-beat loop from that point | yes |
-| OUT | Note | `0x11` | Loop out, loop starts | yes |
-| RELOOP/EXIT | Note | `0x4D` | Exit the loop / re-enter the last one | yes |
-| SHIFT + RELOOP/EXIT | Note | `0x50` | Exit the loop and pause | yes |
-| SHIFT + IN / OUT | Note | `0x4C` / `0x4E` | Loop point adjust with the jog | no |
+| IN | Note | `0x10` | Loop in (on the beat with quantize). During a loop: the jog moves the loop in point until IN again | yes |
+| OUT | Note | `0x11` | Loop out, the loop plays without leaving the beat. During a loop: the jog moves the loop out point until OUT again | yes |
+| 4 BEAT/EXIT | Note | `0x4D` | 4-beat loop from the nearest beat / exit the loop | yes |
+| SHIFT + 4 BEAT/EXIT | Note | `0x50` | Active loop: the last loop on or off, in phase | yes |
+| SHIFT + IN / OUT | Note | `0x4C` / `0x4E` | None in rekordbox; ignored | no |
 | CUE/LOOP CALL ◄ / ► | Note | `0x51` / `0x53` | Halve / double the active loop | yes |
 | SHIFT + CUE/LOOP CALL ◄ / ► | Note | `0x3E` / `0x3D` | Jump 16 beats back / forward | yes |
 | Headphones CUE | Note | `0x54` | Deck in the headphone cue bus | yes |
@@ -106,7 +109,7 @@ Note On to the same address as the control, `0x7F` on and `0x00` off.
 | CUE | ch 1/2 `0x0C` | Track loaded and paused |
 | BEAT SYNC | ch 1/2 `0x58` | Sync engaged |
 | Headphones CUE | ch 1/2 `0x54` | Deck in the cue bus |
-| IN / OUT | ch 1/2 `0x10` / `0x11` | Loop-in set / loop active |
+| IN / OUT | ch 1/2 `0x10` / `0x11` | Loop-in set / loop active; blinking while the jog moves that point |
 | Pad mode buttons | ch 1/2 `0x1B` `0x1E` `0x20` `0x6B` `0x6D` | Mode selected |
 | Hot-cue pads | pad ch `0x00`–`0x07` | Cue stored |
 | Pad FX pads | pad ch `0x10`–`0x17`, `0x50`–`0x57` | Pad held |
@@ -146,6 +149,8 @@ always applies. Not yet verified on hardware.
   <https://www.pioneerdj.com/product/dj-controllers/ddj-flx4>
 - DDJ-FLX4 MIDI message list and capture notes:
   <https://github.com/magtomm/pajoniiir/blob/master/docs/DDJ_FLX4_MIDI_MAP.md>
+- rekordbox hardware diagram for the DDJ-FLX4 (loop section, pad modes):
+  <https://cdn.rekordbox.com/files/20221108163821/DDJ-FLX4_Hardware_Diagram_en.pdf>
 - Mixxx mapping and script:
   <https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Pioneer-DDJ-FLX4.midi.xml>,
   <https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Pioneer-DDJ-FLX4-script.js>

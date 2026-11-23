@@ -140,10 +140,10 @@ class DeckTest {
 
         deck.toggleLoop()
         assertFalse(deck.loopActive)
-        deck.seekTo(20.0)
-        deck.toggleLoop() // reloop
+        deck.seekTo(20.3)
+        deck.toggleLoop() // active loop again: back inside it, at the same place in the beat
         assertTrue(deck.loopActive)
-        assertEquals(4.0, deck.positionSec, 1e-9)
+        assertEquals(4.3, deck.positionSec, 1e-9)
     }
 
     @Test
@@ -159,10 +159,94 @@ class DeckTest {
         deck.exitLoop()
         deck.quantize = false
         deck.seekTo(5.04)
-        deck.setLoopIn()
-        deck.loopFromIn(4.0)
+        deck.fourBeatLoopOrExit()
         assertEquals(5.04, deck.loopInSec, 1e-9)
         assertEquals(7.04, deck.loopOutSec, 1e-9)
+        deck.fourBeatLoopOrExit() // EXIT
+        assertFalse(deck.loopActive)
+    }
+
+    @Test
+    fun `a loop never throws the deck off the beat`() {
+        deck.seekTo(1.0)
+        deck.setLoopIn()
+        deck.seekTo(2.97) // OUT a little early: the loop closes on the beat at 3.0, no jump
+        deck.setLoopOut()
+        assertEquals(2.97, deck.positionSec, 1e-9)
+
+        deck.exitLoop()
+        deck.seekTo(3.03) // OUT a little late: back inside, as far into the beat
+        deck.setLoopOut()
+        assertEquals(1.03, deck.positionSec, 1e-9)
+
+        deck.exitLoop()
+        deck.seekTo(5.96) // 4 BEAT just before a beat starts on that beat
+        deck.fourBeatLoopOrExit()
+        assertEquals(6.0, deck.loopInSec, 1e-9)
+        assertEquals(5.96, deck.positionSec, 1e-9)
+
+        deck.exitLoop()
+        deck.seekTo(10.4) // a 1/4-beat loop starts on the nearest quarter beat, around the playhead
+        deck.toggleBeatLoop(0.25)
+        assertEquals(10.375, deck.loopInSec, 1e-9)
+        assertEquals(10.4, deck.positionSec, 1e-9)
+
+        deck.exitLoop()
+        deck.seekTo(12.0)
+        deck.toggleBeatLoop(4.0)
+        deck.seekTo(13.3)
+        deck.scaleLoop(0.5) // halved under the playhead: wraps in phase
+        assertEquals(12.3, deck.positionSec, 1e-9)
+    }
+
+    @Test
+    fun `a loop seam crossfades instead of clicking`() {
+        deck.load(SineSource(441.0), "Sine", "", 0.0)
+        deck.quantize = false
+        deck.seekTo(10.0)
+        deck.setLoopIn()
+        deck.seekTo(11.0 + 25.0 / 44100) // out of phase with the loop start: a hard cut would step by ~0.5
+        deck.togglePlay()
+        deck.render(256, l, r, null)
+        var previous = l[255]
+        deck.setLoopOut() // the loop closes here, so the deck jumps back to 10.0, then loops once more
+        var worst = 0f
+        repeat((1.5 * 44100 / 256).toInt()) {
+            deck.render(256, l, r, null)
+            for (x in l) {
+                worst = maxOf(worst, abs(x - previous))
+                previous = x
+            }
+        }
+        assertTrue("still looping", deck.positionSec in 10.0..11.01)
+        assertTrue("largest step $worst", worst < 0.05f)
+    }
+
+    @Test
+    fun `IN and OUT during a loop let the jog move its points`() {
+        deck.seekTo(4.0)
+        deck.toggleBeatLoop(4.0) // 4.0 to 6.0
+        deck.setLoopIn()
+        assertEquals(Deck.ADJUST_IN, deck.loopAdjust)
+        deck.bend(40) // 40 jog ticks later
+        assertEquals(4.0 + 40 * Deck.JOG_TICK_SECONDS, deck.loopInSec, 1e-9)
+        deck.setLoopOut()
+        assertEquals(Deck.ADJUST_OUT, deck.loopAdjust)
+        deck.scratchBegin()
+        assertFalse("the jog top moves the point, it does not scratch", deck.scratching)
+        deck.bend(-40)
+        assertEquals(6.0 - 40 * Deck.JOG_TICK_SECONDS, deck.loopOutSec, 1e-9)
+        deck.setLoopOut()
+        assertEquals(0, deck.loopAdjust)
+        deck.bend(10) // a normal pitch bend again
+        assertEquals(6.0 - 40 * Deck.JOG_TICK_SECONDS, deck.loopOutSec, 1e-9)
+
+        deck.setLoopIn()
+        deck.fourBeatLoopOrExit() // EXIT also ends the adjustment
+        assertFalse(deck.loopActive)
+        assertEquals(0, deck.loopAdjust)
+        deck.setLoopIn() // with no loop playing, IN sets a new loop in point
+        assertEquals(4.0, deck.loopInSec, 1e-9)
     }
 
     @Test

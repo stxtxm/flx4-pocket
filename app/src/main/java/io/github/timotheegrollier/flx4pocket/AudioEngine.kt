@@ -6,6 +6,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Process
 import android.util.Log
@@ -66,6 +67,11 @@ class AudioEngine(context: Context) {
     /** 2 or 4; four means the headphones have their own output pair. */
     @Volatile
     var outputChannels: Int = 2
+        private set
+
+    /** Measured delay from the mixer to the output, in ms; 0 until Android reports it. */
+    @Volatile
+    var latencyMs: Int = 0
         private set
 
     private val levels = FloatArray(2)
@@ -210,6 +216,14 @@ class AudioEngine(context: Context) {
         var lastGainA = 0f
         var lastGainB = 0f
 
+        // Latency tuning (as in Oboe): start with two blocks of buffer and add a block
+        // after each underrun, so the mix plays as soon after a move as this output allows.
+        var bufferFrames = out.setBufferSizeInFrames(BLOCK * 2).takeIf { it > 0 } ?: out.bufferSizeInFrames
+        var underruns = out.underrunCount
+        val stamp = AudioTimestamp()
+        var framesWritten = 0L
+        latencyMs = 0
+
         while (running) {
             deckA.render(BLOCK, aL, aR, if (deckA.syncEnabled && masterDeckIndex == 1) deckB else null)
             deckB.render(BLOCK, bL, bR, if (deckB.syncEnabled && masterDeckIndex == 0) deckA else null)
@@ -300,6 +314,16 @@ class AudioEngine(context: Context) {
             if (written < 0) {
                 if (running) error = "Audio output stopped (error $written)"
                 break
+            }
+            framesWritten += BLOCK
+            if (out.underrunCount > underruns && bufferFrames < out.bufferCapacityInFrames) {
+                underruns = out.underrunCount
+                bufferFrames = out.setBufferSizeInFrames(bufferFrames + BLOCK).takeIf { it > 0 } ?: bufferFrames
+            }
+            if (framesWritten % (BLOCK * 64) == 0L && out.getTimestamp(stamp)) {
+                val heard = stamp.framePosition + (System.nanoTime() - stamp.nanoTime) * SAMPLE_RATE / 1_000_000_000L
+                val ms = (framesWritten - heard) * 1000 / SAMPLE_RATE
+                if (ms in 1..999) latencyMs = ms.toInt() // some outputs report stale timestamps
             }
         }
     }

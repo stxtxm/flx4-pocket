@@ -1,5 +1,6 @@
 package io.github.timotheegrollier.flx4pocket
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
@@ -28,6 +29,25 @@ fun TextView.tint(background: Int, foreground: Int) {
         backgroundTintList = ColorStateList.valueOf(background)
     }
     if (currentTextColor != foreground) setTextColor(foreground)
+}
+
+/**
+ * Runs [action] when the finger lands, not when it lifts, so PLAY or a loop
+ * button acts on the beat it was pressed on. Accessibility clicks still work.
+ */
+@SuppressLint("ClickableViewAccessibility")
+fun View.onPress(action: () -> Unit) {
+    setOnClickListener { action() }
+    setOnTouchListener { view, event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                view.isPressed = true
+                action()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> view.isPressed = false
+        }
+        true
+    }
 }
 
 /**

@@ -107,6 +107,11 @@ class Deck(val index: Int) {
     @Volatile
     var loopActive: Boolean = false
         private set
+
+    /** Loop point the jog (or a drag on the waveform) moves: [ADJUST_IN], [ADJUST_OUT] or 0. */
+    @Volatile
+    var loopAdjust: Int = 0
+        private set
     @Volatile
     var padMode: Int = PAD_HOT_CUE
     @Volatile
@@ -144,6 +149,7 @@ class Deck(val index: Int) {
     private var tailPos = 0.0 // next frame of the audio fading out (old grain, or before a jump)
     private var tailLeft = 0
     private var tailLength = 1
+    private var tailFolds = true // keylock grains wrap with the loop; a fading jump or seam plays on past its end
     private var foldStart = 0.0 // the loop or roll a read wraps around
     private var foldLength = 0.0
     private val reference = FloatArray(GRAIN_OVERLAP)
@@ -209,6 +215,7 @@ class Deck(val index: Int) {
         loopInSec = -1.0
         loopOutSec = -1.0
         loopActive = false
+        loopAdjust = 0
         rolling = false
         scratching = false
         scratchPending = 0.0
@@ -320,6 +327,7 @@ class Deck(val index: Int) {
     /** Jog-wheel pitch bend: each tick adds a short-lived speed offset. */
     @Synchronized
     fun bend(ticks: Int) {
+        if (adjusting) return adjustLoop(ticks * JOG_TICK_SECONDS)
         if (playing) {
             // Decaying by 10 % per block, 0.02 shifts the track about 1 ms per tick.
             jogBend = (jogBend + ticks * 0.02).coerceIn(-0.5, 0.5)
@@ -330,7 +338,7 @@ class Deck(val index: Int) {
 
     @Synchronized
     fun scratchBegin() {
-        if (source == null) return
+        if (source == null || adjusting) return
         scratching = true
         scratchPending = 0.0
     }
@@ -339,6 +347,8 @@ class Deck(val index: Int) {
     @Synchronized
     fun scratchMove(seconds: Double) {
         val src = source ?: return
+        // While a loop point is selected, a drag on the waveform moves it with the finger.
+        if (adjusting) return adjustLoop(-seconds)
         if (!scratching) {
             seekToInternal(positionSec + seconds)
             return
@@ -404,65 +414,63 @@ class Deck(val index: Int) {
     }
 
     // ------------------------------------------------------------------
-    // Loops
+    // Loops, played like rekordbox with the FLX4: points snap to the grid
+    // when quantize is on, a loop never throws the deck off the beat, and
+    // the seam crossfades instead of clicking.
     // ------------------------------------------------------------------
 
+    /** IN: sets the loop in point. During a loop: the jog moves it, until IN again. */
     @Synchronized
     fun setLoopIn() {
         if (source == null) return
+        if (loopActive) return toggleAdjust(ADJUST_IN)
         loopInSec = snap(positionSec)
         loopOutSec = -1.0
-        loopActive = false
     }
 
+    /** OUT: sets the loop out point and loops. During a loop: the jog moves it, until OUT again. */
     @Synchronized
     fun setLoopOut() {
         if (source == null || loopInSec < 0.0) return
+        if (loopActive) return toggleAdjust(ADJUST_OUT)
         val out = snap(positionSec)
-        if (out <= loopInSec + MIN_LOOP_SECONDS) return
-        loopOutSec = out
-        loopActive = true
-        seekToInternal(loopInSec)
+        if (out > loopInSec + MIN_LOOP_SECONDS) setLoop(loopInSec, out)
     }
 
-    /** RELOOP/EXIT: leaves the active loop, or re-enters the last one. */
+    /** 4 BEAT/EXIT: a 4-beat loop from here, or out of the loop playing. */
+    @Synchronized
+    fun fourBeatLoopOrExit() = if (loopActive) exitLoop() else toggleBeatLoop(4.0)
+
+    /** SHIFT + 4 BEAT/EXIT (active loop): turns the last loop on or off, without leaving the beat. */
     @Synchronized
     fun toggleLoop() {
         if (loopActive) {
-            loopActive = false
+            exitLoop()
         } else if (loopInSec >= 0.0 && loopOutSec > loopInSec) {
-            loopActive = true
-            seekToInternal(loopInSec)
+            setLoop(loopInSec, loopOutSec)
         }
     }
 
     @Synchronized
     fun exitLoop() {
         loopActive = false
+        loopAdjust = 0
     }
 
-    /** Starts a loop of [beats] at the current beat; the same size again exits it. */
+    /** Loop of [beats] from the nearest beat (or step, for loops under a beat); the same size again exits it. */
     @Synchronized
     fun toggleBeatLoop(beats: Double) {
         if (source == null) return
-        if (loopActive && abs(loopBeats() - beats) < 1e-3) {
-            loopActive = false
-            return
-        }
-        val beat = beatSeconds()
+        if (loopActive && abs(loopBeats() - beats) < 1e-3) return exitLoop()
+        val length = beats * beatSeconds()
+        // Nearest, not last: pressed just before the beat, the loop starts on it.
+        val step = min(length, beatSeconds())
         val start = if (grid.valid && quantize) {
-            grid.anchorSec + grid.beatIndex(positionSec) * beat
+            grid.anchorSec + ((positionSec - grid.anchorSec) / step).roundToLong() * step
         } else {
             positionSec
         }
-        setLoop(start, start + beats * beat)
-    }
-
-    /** Auto loop of [beats] starting at the loop-in point (IN / 4 BEAT long press). */
-    @Synchronized
-    fun loopFromIn(beats: Double) {
-        if (source == null || loopInSec < 0.0) return
-        setLoop(loopInSec, loopInSec + beats * beatSeconds())
+        setLoop(start, start + length)
     }
 
     /** Halves ([factor] 0.5) or doubles (2.0) the active loop. */
@@ -477,11 +485,31 @@ class Deck(val index: Int) {
     /** Length of the active loop in beats, 0 when no loop is active. */
     fun loopBeats(): Double = if (loopActive) (loopOutSec - loopInSec) / beatSeconds() else 0.0
 
+    /** Before the loop the deck plays into it; past its end it wraps now, at the same place in the beat. */
     private fun setLoop(start: Double, end: Double) {
         loopInSec = start.coerceAtLeast(0.0)
         loopOutSec = end
         loopActive = true
-        if (positionSec < loopInSec || positionSec >= loopOutSec) seekToInternal(loopInSec)
+        val length = loopOutSec - loopInSec
+        if (positionSec >= loopOutSec && length > 0.0) seekToInternal(loopInSec + (positionSec - loopInSec) % length)
+    }
+
+    private val adjusting: Boolean get() = loopActive && loopAdjust != 0
+
+    private fun toggleAdjust(point: Int) {
+        loopAdjust = if (loopAdjust == point) 0 else point
+        scratching = false // from now on the jog moves the loop point, not the record
+        scratchPending = 0.0
+    }
+
+    /** Moves the selected loop point by [seconds] (later when positive), never closer than [MIN_LOOP_SECONDS]. */
+    private fun adjustLoop(seconds: Double) {
+        if (loopAdjust == ADJUST_IN) {
+            loopInSec = max(0.0, min(loopInSec + seconds, loopOutSec - MIN_LOOP_SECONDS))
+        } else {
+            val end = if (durationSec > 0.0) durationSec else Double.MAX_VALUE
+            loopOutSec = min(end, max(loopOutSec + seconds, loopInSec + MIN_LOOP_SECONDS))
+        }
     }
 
     @Synchronized
@@ -629,6 +657,8 @@ class Deck(val index: Int) {
         var i = 0
         while (i < frames) {
             if (wrap && wrapLength > 1.0 && cursor >= wrapStart + wrapLength) {
+                // Seamless: what follows the loop end fades out while the loop start fades in.
+                if (!stretching) startTail(cursor, JUMP_FADE, folds = false)
                 cursor = wrapStart + (cursor - wrapStart) % wrapLength
                 if (!src.hasFrame(cursor)) src.seek(cursor / rate)
             }
@@ -654,7 +684,7 @@ class Deck(val index: Int) {
             if (tailLeft > 0) {
                 // Crossfade from the audio fading out: the previous grain, or where a jump left.
                 val w = tailLeft.toDouble() / tailLength
-                val heard = src.sampleFrame(fold(tailPos), sample)
+                val heard = src.sampleFrame(if (tailFolds) fold(tailPos) else tailPos, sample)
                 l = l * (1.0 - w) + if (heard) sample[0] * w else 0.0
                 r = r * (1.0 - w) + if (heard) sample[1] * w else 0.0
                 tailPos += ratio
@@ -709,7 +739,7 @@ class Deck(val index: Int) {
         if (playing || scratching) {
             // Fade the old position out over a few ms rather than cutting it. A grain
             // already fading out finishes first, then the next grain starts at the target.
-            if (stretching) grainLeft = min(grainLeft, tailLeft) else startTail(cursor, JUMP_FADE)
+            if (stretching) grainLeft = min(grainLeft, tailLeft) else startTail(cursor, JUMP_FADE, folds = false)
         }
         cursor = clamped * src.sampleRate
         positionSec = clamped
@@ -717,10 +747,11 @@ class Deck(val index: Int) {
         if (!src.hasFrame(cursor)) src.seek(clamped)
     }
 
-    private fun startTail(position: Double, length: Int) {
+    private fun startTail(position: Double, length: Int, folds: Boolean = true) {
         tailPos = position
         tailLeft = length
         tailLength = length
+        tailFolds = folds
     }
 
     /** Reads that run past the end of the active loop or roll continue from its start. */
@@ -836,6 +867,10 @@ class Deck(val index: Int) {
         const val PAD_FX2 = 5
         const val PAD_BEAT_LOOP = 6
         const val PAD_KEY_SHIFT = 7
+
+        // Loop point the jog adjusts after IN or OUT is pressed during a loop.
+        const val ADJUST_IN = 1
+        const val ADJUST_OUT = 2
 
         val TEMPO_RANGES = doubleArrayOf(0.06, 0.10, 0.16, 0.50)
         val LOOP_BEATS = doubleArrayOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0)

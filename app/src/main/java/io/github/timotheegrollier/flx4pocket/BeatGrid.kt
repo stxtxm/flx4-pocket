@@ -22,11 +22,6 @@ data class BeatGrid(val bpm: Double = 0.0, val anchorSec: Double = 0.0) {
         return beats - floor(beats)
     }
 
-    fun beatIndex(positionSec: Double): Long {
-        if (!valid) return 0L
-        return floor((positionSec - anchorSec) * bpm / 60.0).toLong()
-    }
-
     companion object {
         /**
          * Shortest signed distance in beats from [slavePhase] to [masterPhase],

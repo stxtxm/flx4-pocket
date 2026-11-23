@@ -110,6 +110,17 @@ class MainActivityTest {
         activity.engine.decks[0].toggleBeatLoop(4.0)
         activity.engine.decks[0].seekTo(32.2)
         refresh(activity)
+        val root = screenshot(activity, "main.png")
+        assertTrue(root.width > root.height)
+
+        for (id in listOf(R.id.toggle_deck_a, R.id.toggle_mixer, R.id.toggle_deck_b)) {
+            activity.findViewById<View>(id).performClick()
+        }
+        screenshot(activity, "waveforms.png")
+    }
+
+    /** Lays the screen out at the configured size and writes it to build/screenshots. */
+    private fun screenshot(activity: MainActivity, name: String): View {
         val root = activity.window.decorView
         val metrics = activity.resources.displayMetrics
         root.measure(
@@ -120,10 +131,38 @@ class MainActivityTest {
         val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
         root.draw(Canvas(bitmap))
         File("build/screenshots").mkdirs()
-        File("build/screenshots/main.png").outputStream().use {
+        File("build/screenshots/$name").outputStream().use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
-        assertTrue(root.width > root.height)
+        return root
+    }
+
+    @Test
+    fun `panels fold away and leave the waveforms`() {
+        val activity = launch().get()
+        activity.onBackPressed() // closes the first-run library
+        val area = activity.findViewById<View>(R.id.panels)
+        val toggles = listOf(R.id.toggle_deck_a, R.id.toggle_mixer, R.id.toggle_deck_b)
+        val panels = listOf(R.id.deck_a, R.id.mixer, R.id.deck_b)
+        toggles.forEach { activity.findViewById<View>(it).performClick() }
+        panels.forEach { assertEquals(View.GONE, activity.findViewById<View>(it).visibility) }
+        assertEquals("only the waveforms are left", View.GONE, area.visibility)
+        assertFalse(activity.findViewById<View>(R.id.toggle_mixer).isSelected)
+
+        activity.onBrowse(1, shift = false) // the library still opens, where the panels were
+        assertEquals(View.VISIBLE, area.visibility)
+        activity.onBackPressed()
+        assertEquals(View.GONE, area.visibility)
+
+        activity.findViewById<View>(R.id.toggle_mixer).performClick()
+        assertEquals(View.VISIBLE, area.visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.mixer).visibility)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.deck_a).visibility)
+
+        controller?.pause()?.stop()?.destroy()
+        val again = launch().get() // the choice is remembered
+        assertEquals(View.GONE, again.findViewById<View>(R.id.deck_b).visibility)
+        assertEquals(View.VISIBLE, again.findViewById<View>(R.id.mixer).visibility)
     }
 
     @Test

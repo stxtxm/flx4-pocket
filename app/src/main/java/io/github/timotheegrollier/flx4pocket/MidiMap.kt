@@ -31,8 +31,8 @@ object MidiMap {
     const val NOTE_TEMPO_RANGE = 0x60 // SHIFT + BEAT SYNC
     const val NOTE_LOOP_IN = 0x10
     const val NOTE_LOOP_OUT = 0x11
-    const val NOTE_RELOOP = 0x4D
-    const val NOTE_RELOOP_STOP = 0x50 // SHIFT + RELOOP/EXIT
+    const val NOTE_FOUR_BEAT_EXIT = 0x4D // 4 BEAT/EXIT
+    const val NOTE_ACTIVE_LOOP = 0x50 // SHIFT + 4 BEAT/EXIT
     const val NOTE_LOOP_HALVE = 0x51 // CUE/LOOP CALL left
     const val NOTE_LOOP_DOUBLE = 0x53 // CUE/LOOP CALL right
     const val NOTE_JUMP_BACK = 0x3E // SHIFT + CUE/LOOP CALL left

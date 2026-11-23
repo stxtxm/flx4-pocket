@@ -70,6 +70,9 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private lateinit var libraryInfo: TextView
     private lateinit var librarySearch: EditText
     private lateinit var libraryTarget: TextView
+    private lateinit var panelArea: View
+    private lateinit var foldable: List<View>
+    private lateinit var panelToggles: List<TextView>
 
     private val tracks = ArrayList<Track>()
     private var visibleTracks: List<Track> = emptyList()
@@ -101,7 +104,6 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
     }
     private val taps = Array(2) { ArrayList<Long>() }
-    private val loopInDownAt = LongArray(2)
     private val fxChannels = booleanArrayOf(true, true)
     private var fxBeatIndex = 2 // 1/2 beat
     private var midiName: String? = null
@@ -147,6 +149,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         setupDecks()
         setupMixer()
         setupLibrary()
+        setupPanels()
         findViewById<View>(R.id.btn_library).setOnClickListener { showLibrary(!libraryVisible) }
         findViewById<View>(R.id.btn_audio).setOnClickListener { showAudioSettings() }
         updates = UpdateUi(this, findViewById(R.id.btn_update), work) { engine.decks.any { it.playing } }
@@ -263,7 +266,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         fxDepth.accent = fxColor
         fxDepth.onChange = { engine.beatFx.depth = it }
         fxOn = findViewById(R.id.fx_on)
-        fxOn.setOnClickListener { engine.beatFx.enabled = !engine.beatFx.enabled }
+        fxOn.onPress { engine.beatFx.enabled = !engine.beatFx.enabled }
         engine.beatFx.beats = FX_BEATS[fxBeatIndex]
     }
 
@@ -290,6 +293,37 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         })
         findViewById<View>(R.id.library_folder).setOnClickListener { chooseFolder() }
         findViewById<View>(R.id.library_close).setOnClickListener { showLibrary(false) }
+    }
+
+    /** Deck A, mixer and deck B fold away from their toggles; remembered across launches. */
+    private fun setupPanels() {
+        panelArea = findViewById(R.id.panels)
+        foldable = listOf(findViewById(R.id.deck_a), findViewById(R.id.mixer), findViewById(R.id.deck_b))
+        panelToggles = listOf(findViewById(R.id.toggle_deck_a), findViewById(R.id.toggle_mixer), findViewById(R.id.toggle_deck_b))
+        foldable.forEachIndexed { i, panel ->
+            panel.visibility = if (preferences.getBoolean(PANEL_PREFS[i], true)) View.VISIBLE else View.GONE
+            panelToggles[i].setOnClickListener {
+                val show = panel.visibility != View.VISIBLE
+                panel.visibility = if (show) View.VISIBLE else View.GONE
+                preferences.edit().putBoolean(PANEL_PREFS[i], show).apply()
+                layoutPanels()
+            }
+        }
+        layoutPanels()
+    }
+
+    /** With every panel folded and the library closed, the waveforms get the whole screen. */
+    private fun layoutPanels() {
+        val accents = intArrayOf(R.color.accent_a, R.color.text, R.color.accent_b)
+        var anyOpen = false
+        foldable.forEachIndexed { i, panel ->
+            val open = panel.visibility == View.VISIBLE
+            anyOpen = anyOpen || open
+            panelToggles[i].isSelected = open
+            if (open) panelToggles[i].tint(getColor(accents[i]), getColor(R.color.on_accent))
+            else panelToggles[i].tint(getColor(R.color.panel_alt), getColor(R.color.text_dim))
+        }
+        panelArea.visibility = if (anyOpen || libraryVisible) View.VISIBLE else View.GONE
     }
 
     // ---------------------------------------------------------------------
@@ -342,7 +376,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             engine.splitCue -> "split cue"
             else -> "stereo"
         }
-        statusLabel.show("${midiName ?: getString(R.string.status_no_controller)}  ·  $output ($layout)")
+        val latency = if (engine.latencyMs > 0) "  ·  ${engine.latencyMs} ms" else ""
+        statusLabel.show("${midiName ?: getString(R.string.status_no_controller)}  ·  $output ($layout)$latency")
         statusLabel.setTextColor(getColor(if (midiName != null) R.color.ok else R.color.text_dim))
     }
 
@@ -355,8 +390,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             midi.setLed(index, MidiMap.NOTE_CUE, d.hasTrack() && !d.playing)
             midi.setLed(index, MidiMap.NOTE_SYNC, d.syncEnabled)
             midi.setLed(index, MidiMap.NOTE_CUE_CHANNEL, d.cueEnabled)
-            midi.setLed(index, MidiMap.NOTE_LOOP_IN, d.loopInSec >= 0.0)
-            midi.setLed(index, MidiMap.NOTE_LOOP_OUT, d.loopActive)
+            // IN or OUT blinks while the jog moves its loop point, as with rekordbox.
+            val blink = SystemClock.uptimeMillis() / 250 % 2 == 0L
+            midi.setLed(index, MidiMap.NOTE_LOOP_IN, if (d.loopAdjust == Deck.ADJUST_IN) blink else d.loopInSec >= 0.0)
+            midi.setLed(index, MidiMap.NOTE_LOOP_OUT, if (d.loopAdjust == Deck.ADJUST_OUT) blink else d.loopActive)
             midi.setLed(index, MidiMap.NOTE_HOT_CUE_MODE, mode == Deck.PAD_HOT_CUE)
             midi.setLed(index, MidiMap.NOTE_PAD_FX1_MODE, mode == Deck.PAD_FX1)
             midi.setLed(index, MidiMap.NOTE_BEAT_JUMP_MODE, mode == Deck.PAD_BEAT_JUMP)
@@ -467,15 +504,6 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                     else -> AudioEngine.FX_MASTER
                 }
             }
-            Flx4Button.LOOP_IN -> if (d != null) {
-                val now = SystemClock.uptimeMillis()
-                if (down) {
-                    d.setLoopIn()
-                    loopInDownAt[deck] = now
-                } else if (now - loopInDownAt[deck] > 500) {
-                    d.loopFromIn(4.0) // IN / 4 BEAT held
-                }
-            }
             else -> if (down) onPress(deck, d, button)
         }
     }
@@ -487,12 +515,11 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Flx4Button.SYNC -> onSync(deck)
             Flx4Button.MASTER -> onMaster(deck)
             Flx4Button.TEMPO_RANGE -> d?.cycleTempoRange()
+            // The loop section as rekordbox maps it on the FLX4.
+            Flx4Button.LOOP_IN -> d?.setLoopIn()
             Flx4Button.LOOP_OUT -> d?.setLoopOut()
-            Flx4Button.RELOOP -> d?.toggleLoop()
-            Flx4Button.RELOOP_STOP -> {
-                d?.exitLoop()
-                d?.pause()
-            }
+            Flx4Button.FOUR_BEAT_EXIT -> d?.fourBeatLoopOrExit()
+            Flx4Button.ACTIVE_LOOP -> d?.toggleLoop()
             Flx4Button.LOOP_HALVE -> d?.scaleLoop(0.5)
             Flx4Button.LOOP_DOUBLE -> d?.scaleLoop(2.0)
             Flx4Button.JUMP_BACK -> d?.beatJump(-QUICK_JUMP_BEATS)
@@ -622,6 +649,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 .hideSoftInputFromWindow(librarySearch.windowToken, 0)
             librarySearch.clearFocus()
         }
+        layoutPanels() // the library needs the panel area, even with every panel folded
     }
 
     private fun chooseFolder() {
@@ -832,6 +860,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         const val PREF_FOLDER = "folder"
         const val PREF_SPLIT = "split_cue"
         const val PREF_ZOOM = "zoom"
+        val PANEL_PREFS = arrayOf("panel_deck_a", "panel_mixer", "panel_deck_b")
         const val QUICK_JUMP_BEATS = 16.0
 
         /** Tempo fader distance (1 % of its travel) at which it takes over. */

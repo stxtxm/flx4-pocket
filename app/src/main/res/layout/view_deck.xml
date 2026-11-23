@@ -99,7 +99,8 @@
             <TextView
                 android:id="@+id/deck_reloop"
                 style="@style/Btn"
-                android:text="LOOP" />
+                android:contentDescription="4-beat loop, or exit the loop"
+                android:text="4 BEAT" />
             <TextView
                 android:id="@+id/deck_loop_half"
                 style="@style/Btn"
