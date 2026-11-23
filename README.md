@@ -67,6 +67,20 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 The FLX4 power port is separate from the data port by design; the phone's OTG
 current is not enough for the controller.
 
+### Do not open the APK on Fedora/GNOME
+
+If double-clicking the APK in GNOME Files starts GNOME Software/PackageKit and
+shows an authentication error ("Mise à jour impossible… groupe wheel / mot de
+passe root"), that is the Linux package manager trying to install an **Android**
+package as if it were an RPM. It is unrelated to FLX4 Pocket and cannot succeed.
+
+Copy the APK to the Pixel and open it there, or install it from this repository
+with adb:
+
+```bash
+adb install -r FLX4-Pocket-0.1.0.apk
+```
+
 ## Controller workflow
 
 | FLX4 control | App action |
