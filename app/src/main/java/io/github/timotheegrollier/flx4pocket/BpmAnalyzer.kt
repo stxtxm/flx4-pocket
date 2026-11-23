@@ -1,24 +1,15 @@
 package io.github.timotheegrollier.flx4pocket
 
-import android.content.Context
-import android.media.AudioFormat
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.net.Uri
-import java.nio.ByteOrder
-import kotlin.math.abs
-import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Offline BPM estimation based on an onset-energy autocorrelation.
+ * BPM estimation based on an onset-energy autocorrelation.
  *
- * It is intentionally dependency-free: the app ships no native analysis
- * library. When the estimate has a low confidence the UI asks the user to tap
- * the tempo instead, and the grid can always be corrected by tapping.
+ * It is intentionally dependency-free and Android-free. When the estimate has
+ * a low confidence the UI marks the BPM with "~", and the grid can always be
+ * corrected by tapping the tempo.
  */
 object BpmAnalyzer {
 
@@ -31,16 +22,34 @@ object BpmAnalyzer {
 
     data class Estimate(val bpm: Double, val anchorSec: Double, val confidence: Double)
 
-    fun analyze(context: Context, uri: Uri, maxSeconds: Double = 60.0): Result? {
-        val decoded = decodeEnergy(context, uri, maxSeconds) ?: return null
-        if (decoded.energies.size < decoded.fps * 8.0) return null
-        val estimate = estimate(decoded.energies, decoded.fps) ?: return null
-        return Result(
-            bpm = estimate.bpm,
-            anchorSec = estimate.anchorSec,
-            confidence = estimate.confidence,
-            durationSec = decoded.durationSec
-        )
+    /** Collects the short-time energy of a PCM stream, the input of [estimate]. */
+    class Onsets(private val sampleRate: Int) {
+        private val hop = max(64, sampleRate / 172)
+        private var energies = FloatArray(16_384)
+        private var size = 0
+        private var sum = 0.0
+        private var count = 0
+
+        val seconds: Double get() = size.toDouble() * hop / sampleRate
+
+        fun add(stereo: FloatArray, frames: Int) {
+            for (f in 0 until frames) {
+                val mono = (stereo[f * 2] + stereo[f * 2 + 1]) * 0.5
+                sum += mono * mono
+                if (++count == hop) {
+                    if (size == energies.size) energies = energies.copyOf(size * 2)
+                    energies[size++] = (sum / hop).toFloat()
+                    sum = 0.0
+                    count = 0
+                }
+            }
+        }
+
+        /** Null when there is less than eight seconds of audio or no clear pulse. */
+        fun estimate(): Estimate? {
+            if (seconds < 8.0) return null
+            return estimate(energies.copyOf(size), sampleRate.toDouble() / hop)
+        }
     }
 
     /**
@@ -168,164 +177,4 @@ object BpmAnalyzer {
         }
         return bestBpm to bestPhase / fps
     }
-
-    private data class Decoded(
-        val energies: FloatArray,
-        val fps: Double,
-        val durationSec: Double
-    )
-
-    private fun decodeEnergy(context: Context, uri: Uri, maxSeconds: Double): Decoded? {
-        val extractor = MediaExtractor()
-        var codec: MediaCodec? = null
-        try {
-            extractor.setDataSource(context.applicationContext, uri, null)
-            var trackIndex = -1
-            var format: MediaFormat? = null
-            var mime: String? = null
-            for (i in 0 until extractor.trackCount) {
-                val candidate = extractor.getTrackFormat(i)
-                val candidateMime = candidate.getString(MediaFormat.KEY_MIME) ?: continue
-                if (candidateMime.startsWith("audio/")) {
-                    trackIndex = i
-                    format = candidate
-                    mime = candidateMime
-                    break
-                }
-            }
-            if (trackIndex < 0) return null
-            extractor.selectTrack(trackIndex)
-            val durationSec = format!!.longOr(MediaFormat.KEY_DURATION, 0L) / 1_000_000.0
-            codec = MediaCodec.createDecoderByType(mime!!)
-            codec.configure(format, null, null, 0)
-            codec.start()
-
-            var rate = format.intOr(MediaFormat.KEY_SAMPLE_RATE, 44100)
-            var channels = format.intOr(MediaFormat.KEY_CHANNEL_COUNT, 2)
-            var encoding = AudioFormat.ENCODING_PCM_16BIT
-            var hop = max(64, rate / 172)
-            val energies = FloatBuilder()
-            var accumulated = 0.0
-            var accumulatedFrames = 0
-            var decodedFrames = 0L
-            var inputDone = false
-            var outputDone = false
-            val info = MediaCodec.BufferInfo()
-            val maxFrames = (maxSeconds * rate).toLong()
-
-            while (!outputDone) {
-                if (!inputDone) {
-                    val inputIndex = codec.dequeueInputBuffer(10_000)
-                    if (inputIndex >= 0) {
-                        val input = codec.getInputBuffer(inputIndex)
-                        val size = if (input != null) extractor.readSampleData(input, 0) else -1
-                        if (size < 0) {
-                            codec.queueInputBuffer(
-                                inputIndex, 0, 0, 0,
-                                MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                            )
-                            inputDone = true
-                        } else {
-                            codec.queueInputBuffer(inputIndex, 0, size, extractor.sampleTime, 0)
-                            extractor.advance()
-                        }
-                    }
-                }
-
-                val outputIndex = codec.dequeueOutputBuffer(info, 10_000)
-                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val outputFormat = codec.outputFormat
-                    rate = outputFormat.intOr(MediaFormat.KEY_SAMPLE_RATE, rate)
-                    channels = outputFormat.intOr(MediaFormat.KEY_CHANNEL_COUNT, channels)
-                    if (outputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                        encoding = outputFormat.intOr(
-                            MediaFormat.KEY_PCM_ENCODING,
-                            AudioFormat.ENCODING_PCM_16BIT
-                        )
-                    }
-                    hop = max(64, rate / 172)
-                    continue
-                }
-                if (outputIndex < 0) continue
-
-                val buffer = codec.getOutputBuffer(outputIndex)
-                if (buffer != null && info.size > 0) {
-                    buffer.position(info.offset)
-                    buffer.limit(info.offset + info.size)
-                    val bytesPerSample =
-                        if (encoding == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2
-                    val frameCount = info.size / (bytesPerSample * channels.coerceAtLeast(1))
-                    if (encoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                        val floats = buffer.order(ByteOrder.nativeOrder()).asFloatBuffer()
-                        for (f in 0 until frameCount) {
-                            val base = f * channels
-                            val left = floats.get(base)
-                            val right = if (channels > 1) floats.get(base + 1) else left
-                            val mono = (left + right) * 0.5
-                            accumulated += mono * mono
-                            accumulatedFrames++
-                            if (accumulatedFrames >= hop) {
-                                energies.add((accumulated / accumulatedFrames).toFloat())
-                                accumulated = 0.0
-                                accumulatedFrames = 0
-                            }
-                        }
-                    } else {
-                        val shorts = buffer.order(ByteOrder.nativeOrder()).asShortBuffer()
-                        for (f in 0 until frameCount) {
-                            val base = f * channels
-                            val left = shorts.get(base) / 32768.0
-                            val right = if (channels > 1) shorts.get(base + 1) / 32768.0 else left
-                            val mono = (left + right) * 0.5
-                            accumulated += mono * mono
-                            accumulatedFrames++
-                            if (accumulatedFrames >= hop) {
-                                energies.add((accumulated / accumulatedFrames).toFloat())
-                                accumulated = 0.0
-                                accumulatedFrames = 0
-                            }
-                        }
-                    }
-                    decodedFrames += frameCount
-                }
-                codec.releaseOutputBuffer(outputIndex, false)
-                if (decodedFrames >= maxFrames) break
-                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
-            }
-
-            if (energies.size < 32) return null
-            return Decoded(energies.toArray(), rate.toDouble() / hop, durationSec)
-        } catch (e: Exception) {
-            return null
-        } finally {
-            try {
-                codec?.stop()
-            } catch (_: Exception) {
-            }
-            try {
-                codec?.release()
-            } catch (_: Exception) {
-            }
-            extractor.release()
-        }
-    }
-
-    private class FloatBuilder {
-        private var data = FloatArray(1024)
-        var size = 0
-            private set
-
-        fun add(value: Float) {
-            if (size == data.size) data = data.copyOf(data.size * 2)
-            data[size++] = value
-        }
-
-        fun toArray(): FloatArray = data.copyOf(size)
-    }
 }
-
-private fun MediaFormat.intOr(key: String, fallback: Int): Int =
-    if (containsKey(key)) getInteger(key) else fallback
-
-private fun MediaFormat.longOr(key: String, fallback: Long): Long =
-    if (containsKey(key)) getLong(key) else fallback

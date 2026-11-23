@@ -2,29 +2,29 @@
 <resources>
     <string name="app_name">FLX4 Pocket</string>
     <string name="play_no_track">Load a track first (open LIBRARY)</string>
+    <string name="status_no_controller">No controller</string>
+    <string name="status_phone_output">phone output</string>
+    <string name="back_again">Music is playing — press back again to quit</string>
+    <string name="not_supported">%1$s is not supported yet</string>
 
     <!-- In-app updates -->
-    <string name="update_title">Update %1$s</string>
-    <string name="version_format">FLX4 Pocket v%1$s</string>
-    <string name="btn_check_updates">Check updates</string>
-    <string name="btn_update_checking">Refreshing…</string>
-    <string name="btn_update_available">Update to %1$s</string>
-    <string name="downloading_title">Downloading %1$s</string>
-    <string name="update_available_message">A new FLX4 Pocket version is available.\n\n%1$s</string>
-    <string name="update_now">Download &amp; install</string>
-    <string name="open_github">GitHub</string>
+    <string name="update_checking">CHECKING…</string>
+    <string name="update_available">UPDATE %1$s</string>
+    <string name="update_install">INSTALL %1$s</string>
+    <string name="update_up_to_date">You have the latest version (%1$s)</string>
+    <string name="update_title">FLX4 Pocket %1$s</string>
+    <string name="update_download">Download</string>
     <string name="update_later">Later</string>
-    <string name="installing_confirm">Confirm the installation in the Android dialog</string>
-    <string name="install_failed">Cannot install the update</string>
-    <string name="download_failed">Update download failed</string>
-    <string name="no_update_found">No update found</string>
+    <string name="update_github">GitHub</string>
+    <string name="update_ready">Update downloaded — tap INSTALL when the music can stop</string>
+    <string name="update_downloading">The update is still downloading</string>
+    <string name="update_download_failed">Update download failed</string>
+    <string name="update_install_failed">Cannot install the update</string>
+    <string name="update_confirm_playing">Installing restarts the app and stops the music. Install now?</string>
+    <string name="update_install_now">Install</string>
+    <string name="update_confirm_system">Confirm the installation in the Android dialog</string>
     <string name="allow_installs_title">Allow app installs</string>
-    <string name="allow_installs_message">Android must allow FLX4 Pocket to install its own updates. Enable "Allow from this source", then tap the update button again.</string>
+    <string name="allow_installs_message">Android must allow FLX4 Pocket to install its own updates. Enable "Allow from this source", then come back: the installation continues by itself.</string>
     <string name="settings_open">Open settings</string>
-    <string name="settings_cancel">Cancel</string>
-
-    <!-- Status line -->
-    <string name="status_no_controller">DDJ-FLX4 not detected</string>
-    <string name="status_controller">MIDI: %1$s</string>
-    <string name="status_output">Output: %1$s</string>
+    <string name="cancel">Cancel</string>
 </resources>

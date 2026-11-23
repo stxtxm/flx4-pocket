@@ -1,7 +1,9 @@
 package io.github.timotheegrollier.flx4pocket
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.sin
+import kotlin.math.tanh
 
 object MixerMath {
 
@@ -33,4 +35,15 @@ object MixerMath {
     }
 
     fun filterAmount(knob: Float): Float = (knob.coerceIn(0f, 1f) - 0.5f) * 2f
+
+    /**
+     * Master limiter: linear up to 0.8, then eases into +/-1 instead of
+     * hard-clipping when two loud tracks overlap.
+     */
+    fun softClip(x: Float): Float {
+        val magnitude = abs(x)
+        if (magnitude <= 0.8f) return x
+        val shaped = 0.8f + 0.2f * tanh((magnitude - 0.8f) / 0.2f)
+        return if (x < 0f) -shaped else shaped
+    }
 }

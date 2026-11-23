@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="52dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="10dp"
+    android:paddingEnd="6dp">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/row_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/text"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/row_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:textColor="@color/text_dim"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <!-- Not focusable, or the ListView would stop reporting row taps. -->
+    <TextView
+        android:id="@+id/row_load_a"
+        style="@style/Btn.Wrap"
+        android:layout_height="40dp"
+        android:backgroundTint="@color/accent_a"
+        android:focusable="false"
+        android:minWidth="64dp"
+        android:text="DECK A"
+        android:textColor="@color/on_accent" />
+
+    <TextView
+        android:id="@+id/row_load_b"
+        style="@style/Btn.Wrap"
+        android:layout_height="40dp"
+        android:backgroundTint="@color/accent_b"
+        android:focusable="false"
+        android:minWidth="64dp"
+        android:text="DECK B"
+        android:textColor="@color/on_accent" />
+</LinearLayout>

@@ -17,12 +17,24 @@ class PcmRing(
     private val data = FloatArray(capacityFrames * channels)
     private var baseFrame = 0L
     private var availableFrames = 0
+    private var lastRead = 0.0
 
     @Synchronized
     fun reset(startFrame: Long) {
         baseFrame = startFrame
         availableFrames = 0
+        lastRead = startFrame.toDouble()
     }
+
+    /**
+     * True while less than [aheadFrames] are buffered past the last frame the
+     * mixer asked for. The decoder must stop writing when this is false:
+     * a file decodes far faster than it plays, and [write] evicts the oldest
+     * audio, so an unthrottled decoder would overwrite what is about to play.
+     */
+    @Synchronized
+    fun wantsData(aheadFrames: Int): Boolean =
+        baseFrame + availableFrames < lastRead + aheadFrames
 
     @Synchronized
     fun bufferedFrames(): Long = availableFrames.toLong()
@@ -109,6 +121,7 @@ class PcmRing(
     @Synchronized
     fun sample(frame: Double, out: FloatArray): Boolean {
         if (!frame.isFinite()) return false
+        lastRead = frame
         val relative = frame - baseFrame
         if (relative < 0.0 || relative + 1.0 >= availableFrames) return false
         val index = relative.toInt()

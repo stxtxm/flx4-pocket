@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One mixer channel strip. Deck B includes it inside an RTL parent so the
+     two strips mirror each other around the centre of the mixer. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_weight="1"
+    android:orientation="horizontal">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <io.github.timotheegrollier.flx4pocket.KnobView
+            android:id="@+id/ch_trim"
+            style="@style/Knob"
+            android:contentDescription="TRIM" />
+
+        <io.github.timotheegrollier.flx4pocket.KnobView
+            android:id="@+id/ch_filter"
+            style="@style/Knob"
+            android:contentDescription="FILTER" />
+
+        <TextView
+            android:id="@+id/ch_cue"
+            style="@style/Btn"
+            android:layout_width="match_parent"
+            android:layout_height="30dp"
+            android:layout_weight="0"
+            android:text="CUE" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <io.github.timotheegrollier.flx4pocket.KnobView
+            android:id="@+id/ch_eq_hi"
+            style="@style/Knob"
+            android:contentDescription="HI" />
+
+        <io.github.timotheegrollier.flx4pocket.KnobView
+            android:id="@+id/ch_eq_mid"
+            style="@style/Knob"
+            android:contentDescription="MID" />
+
+        <io.github.timotheegrollier.flx4pocket.KnobView
+            android:id="@+id/ch_eq_low"
+            style="@style/Knob"
+            android:contentDescription="LOW" />
+    </LinearLayout>
+
+    <io.github.timotheegrollier.flx4pocket.FaderView
+        android:id="@+id/ch_volume"
+        android:layout_width="38dp"
+        android:layout_height="match_parent"
+        android:contentDescription="Channel fader" />
+
+    <io.github.timotheegrollier.flx4pocket.VuView
+        android:id="@+id/ch_vu"
+        android:layout_width="7dp"
+        android:layout_height="match_parent"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="6dp" />
+</LinearLayout>

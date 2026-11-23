@@ -4,45 +4,63 @@
 
 ```bash
 ./gradlew testDebugUnitTest
+./gradlew assembleDebug lintDebug
 ```
 
-Covered without an Android device:
+All tests run on the JVM; no device or emulator is needed.
 
-- `Biquad`: transparency at 0 dB, low-pass DC gain and 10 kHz attenuation,
-  high-pass DC rejection.
-- `MixerMath`: equal-power crossfader, unity EQ/trim, fader curve.
-- `BeatGrid`: phase, anchor-relative phase, wrapped phase error, invalid grid.
-- `PcmRing`: interpolation, seek reset, eviction of old audio.
-- `BpmAnalyzer`: synthetic 120 BPM and 128 BPM click tracks (beat-aligned
-  anchor) and silence rejection.
+| Test class | Covers |
+| --- | --- |
+| `Flx4DecoderTest` | The FLX4 address table: every mapped button, knob, jog mode and pad range, running status, 14-bit pairs per deck, relative encoders |
+| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, hot cues, beat jump, slip roll, pad FX, scratch, bend, sync, Smart CFX |
+| `FxTest` | Bypass when off, echo timing and tail, trans gating, stability of every effect |
+| `WaveformTest` | Resolution, band separation, overflow, cache-file round trip |
+| `PcmRingTest` | Interpolation, seek reset, eviction, decoder throttling |
+| `DspTest` | Biquads, mixer curves, soft limiter |
+| `BpmAnalyzerTest`, `BeatGridTest` | Tempo estimation and beat math |
+| `MainActivityTest` (Robolectric) | The real layouts inflate, the activity runs its lifecycle, touch controls and controller events reach the engine |
 
-## Build check
+`MainActivityTest` also writes `app/build/screenshots/main.png`, a rendering of
+the mixing screen with two synthetic tracks. Open it after changing a layout.
 
-```bash
-./gradlew assembleDebug
-./gradlew assembleRelease   # requires the signing environment variables
-```
+## What the tests cannot show
 
-## Hardware checks still required
+Robolectric stubs `AudioTrack`, `MediaCodec` and `MidiManager`. Nothing below
+has been executed on real hardware for 0.2.0; please check it on a phone, and
+with a DDJ-FLX4 where marked.
 
-These cannot be executed in this repository's CI and must be verified with a real
-DDJ-FLX4 and a Pixel 9a:
+Audio
 
-1. USB MIDI enumeration and reconnect after unplugging.
-2. Every fader/knob direction and 14-bit resolution, especially the tempo fader
-   sign and the jog direction.
-3. LED feedback for play, cue, sync, channel cue and pads.
-4. Tempo range cycling with SHIFT + BEAT SYNC.
-5. Audio output selection: phone speaker, wired output, and (if the phone
-   exposes it) the FLX4 USB stereo sink.
-6. Split-cue with a stereo splitter cable.
-7. Latency feel and sync stability over a long mix.
-8. First-run SAF folder permission and persisted access after a reboot.
-9. In-app update from one signed release to the next, including the Android
-   unknown-source permission and installer confirmation.
-10. Behaviour when the phone is unplugged from the controller during playback.
+1. A loaded track plays, in time, without dropouts; seeking and loops are clean.
+2. Scratching on the waveform and long backward drags recover.
+3. Two decks stay in sync over several minutes.
+4. Effects sound right and do not clip.
 
-Record the firmware version and phone build in any bug report.
+Controller (FLX4)
+
+5. The controller powers up from the phone, or needs its power port.
+6. MIDI is detected, and again after unplugging and replugging.
+7. Direction of every fader and knob; the tempo fader sign and the browse
+   knob direction were changed in 0.2.0 to follow the Mixxx mapping.
+8. Jog: touch-scratch, side bend, SHIFT search.
+9. LEDs: play, cue, sync, channel cue, loop in/out, pad modes, pads, Beat FX,
+   Smart CFX, master cue, level meters.
+10. Beat FX channel switch (1 / 2 / 1&2) and level/depth knob.
+
+USB audio
+
+11. With the FLX4 connected, the status line shows its name. Note whether it
+    says `master 1-2 + phones 3-4` or `stereo`.
+12. In four-channel mode: master on the MASTER outputs, cue on PHONES, mix and
+    level knobs working.
+13. Unplugging the controller pauses both decks.
+
+App
+
+14. First-run folder picker, and the folder still readable after a reboot.
+15. In-app update from one signed release to the next.
+
+Record the phone model, Android build and FLX4 firmware in any report.
 
 ## Manual smoke test with adb
 
@@ -52,5 +70,9 @@ adb shell am start -n io.github.timotheegrollier.flx4pocket/.MainActivity
 adb logcat -s Flx4Midi Flx4Audio AndroidRuntime
 ```
 
-No emulator or device was attached to the environment where 0.1.1 was built, so
-these hardware checks are explicitly pending.
+To see what Android exposes for the controller's sound card:
+
+```bash
+adb shell dumpsys audio | grep -i -A6 usb
+adb shell dumpsys media.audio_policy | grep -i -B2 -A12 usb
+```

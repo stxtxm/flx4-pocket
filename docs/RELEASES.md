@@ -6,11 +6,11 @@
 Both live in `app/build.gradle`:
 
 ```groovy
-versionCode 2
-versionName "0.1.1"
+versionCode 4
+versionName "0.2.0"
 ```
 
-The release tag is `v<versionName>` (for example `v0.1.1`).
+The release tag is `v<versionName>` (for example `v0.2.0`).
 
 ## Signing key
 
@@ -48,8 +48,8 @@ channel for an already installed release build, because the debug key differs.
    ```
 4. Commit, push, then create and push the tag:
    ```bash
-   git tag v0.1.1
-   git push origin v0.1.1
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 5. The **Release** workflow:
    - builds the unit tests;
@@ -62,9 +62,9 @@ channel for an already installed release build, because the debug key differs.
 
 ```json
 {
-  "versionCode": 2,
-  "versionName": "0.1.1",
-  "apk": "FLX4-Pocket-0.1.1.apk",
+  "versionCode": 4,
+  "versionName": "0.2.0",
+  "apk": "FLX4-Pocket-0.2.0.apk",
   "sha256": "<hex>",
   "notes": "Release notes shown inside the app"
 }
@@ -74,19 +74,27 @@ The app only offers an update when `versionCode` is greater than the installed
 package. It verifies the APK SHA-256, package name, version and signing
 certificate before opening Android's installer.
 
-## In-app update flow on a Pixel 9a
+## In-app update flow
+
+Everything happens on the version button in the top bar (`UpdateUi`):
+
+| Button shows | Meaning | Tap |
+| --- | --- | --- |
+| `v0.2.0` | Up to date, or not checked yet | Check now |
+| `CHECKING…` | Reading the latest release | — |
+| `UPDATE 0.2.1` (amber) | A newer `versionCode` is published | Release notes, then **Download** |
+| `↓ 42%` | Downloading in the background | — |
+| `INSTALL 0.2.1` (green) | Downloaded and SHA-256 verified | Install |
 
 1. The first release is installed manually (browser or `adb install`).
-2. On launch the app checks for a newer release at most every six hours; the
-   **CHECK UPDATES** button forces a check.
-3. If an update exists, the button shows the version and a dialog shows the
-   release notes.
-4. **Download & install** downloads the APK with progress. Android may ask once
-   to allow "install unknown apps" for FLX4 Pocket; the app opens that setting
-   and resumes automatically when you return.
-5. Android shows its own confirmation. This is a platform requirement and cannot
-   be bypassed by a normal app.
-6. On success the downloaded file is deleted.
+2. The app checks a few seconds after launch and then every hour. Background
+   checks never show a dialog or a toast.
+3. The download does not block the screen, so a mix can continue.
+4. Nothing is installed until INSTALL is tapped; if a deck is playing the app
+   asks first, because installing restarts it.
+5. Android may ask once to allow "install unknown apps" for FLX4 Pocket. The
+   app opens that setting and continues the installation when you return.
+6. Android shows its own confirmation. This is a platform requirement.
 
 ## Why the key is critical
 

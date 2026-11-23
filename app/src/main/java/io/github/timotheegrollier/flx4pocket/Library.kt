@@ -3,6 +3,8 @@ package io.github.timotheegrollier.flx4pocket
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import java.io.File
+import java.util.UUID
 
 data class Track(
     val uri: Uri,
@@ -90,17 +92,18 @@ class Library(private val context: Context) {
 }
 
 /**
- * Persists BPM results keyed by document and modification time. Re-analysing a
- * 60 second window every time a track is loaded would make the app feel slow.
+ * Persists what the analysis of a track produced, keyed by document and
+ * modification time: the beat grid and hot cues in SharedPreferences, the
+ * waveform as a file in the cache directory.
  */
 class AnalysisCache(context: Context) {
 
     private val preferences =
         context.getSharedPreferences("flx4-analysis", Context.MODE_PRIVATE)
+    private val waveforms = File(context.cacheDir, "waveforms")
 
     fun get(track: Track): BpmAnalyzer.Result? {
-        val raw = preferences.getString(key(track), null) ?: return null
-        val parts = raw.split('|')
+        val parts = preferences.getString(key(track), null)?.split('|') ?: return null
         if (parts.size != 4) return null
         val bpm = parts[0].toDoubleOrNull() ?: return null
         val anchor = parts[1].toDoubleOrNull() ?: return null
@@ -119,5 +122,78 @@ class AnalysisCache(context: Context) {
             .apply()
     }
 
+    fun waveformFile(track: Track): File =
+        File(waveforms, UUID.nameUUIDFromBytes(key(track).toByteArray()).toString())
+
+    fun hotCues(track: Track): Array<Double?> {
+        val parts = preferences.getString(key(track) + "|cues", null)?.split(';')
+        return Array(8) { parts?.getOrNull(it)?.toDoubleOrNull() }
+    }
+
+    fun putHotCues(track: Track, cues: Array<Double?>) {
+        preferences.edit()
+            .putString(key(track) + "|cues", cues.joinToString(";") { it?.toString().orEmpty() })
+            .apply()
+    }
+
     private fun key(track: Track): String = "${track.uri}|${track.lastModified}"
+}
+
+/** One decode pass over a track that yields both its beat grid and its waveform. */
+object TrackAnalyzer {
+
+    /**
+     * Blocking; run it on a worker thread. [onWaveform] receives the waveform
+     * as soon as it exists (it keeps filling while the UI draws it), [onGrid]
+     * the beat grid once the first minute has been heard. Both may be called
+     * immediately from the cache.
+     */
+    fun analyze(
+        context: Context,
+        track: Track,
+        cache: AnalysisCache,
+        cancelled: () -> Boolean,
+        onWaveform: (Waveform) -> Unit,
+        onGrid: (BpmAnalyzer.Result) -> Unit
+    ) {
+        val cachedGrid = cache.get(track)?.also(onGrid)
+        val cachedWave = Waveform.read(cache.waveformFile(track))?.also(onWaveform)
+        if (cachedGrid != null && cachedWave != null) return
+
+        var builder: WaveformBuilder? = null
+        var onsets: BpmAnalyzer.Onsets? = null
+        var gridDone = cachedGrid != null
+        var duration = 0.0
+        fun finishGrid() {
+            gridDone = true
+            val estimate = onsets?.estimate() ?: return
+            val result = BpmAnalyzer.Result(estimate.bpm, estimate.anchorSec, estimate.confidence, duration)
+            cache.put(track, result)
+            onGrid(result)
+        }
+
+        val decoded = PcmDecoder.decode(context, track.uri) { stereo, frames, sampleRate, durationSec ->
+            duration = durationSec
+            if (cachedWave == null) {
+                val target = builder ?: WaveformBuilder(sampleRate, durationSec).also {
+                    builder = it
+                    onWaveform(it.waveform)
+                }
+                target.add(stereo, frames)
+            }
+            if (!gridDone) {
+                val energy = onsets ?: BpmAnalyzer.Onsets(sampleRate).also { onsets = it }
+                energy.add(stereo, frames)
+                if (energy.seconds >= GRID_SECONDS) finishGrid()
+            }
+            !cancelled() && (cachedWave == null || !gridDone)
+        }
+        if (cancelled()) return
+        if (!gridDone) finishGrid()
+        val waveform = builder?.waveform ?: return
+        waveform.complete = true
+        if (decoded) runCatching { waveform.write(cache.waveformFile(track)) }
+    }
+
+    private const val GRID_SECONDS = 60.0
 }

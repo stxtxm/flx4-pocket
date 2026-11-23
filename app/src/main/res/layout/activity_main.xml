@@ -9,31 +9,22 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
+        <!-- Top bar -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:background="@color/panel"
+            android:layout_height="36dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="10dp"
-            android:paddingEnd="8dp">
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="FLX4 POCKET"
-                android:textColor="@color/accent"
-                android:textSize="13sp"
+                android:textColor="@color/text"
+                android:textSize="12sp"
                 android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/version_label"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:textColor="@color/text_hint"
-                android:textSize="10sp"
-                android:text="version not set" />
 
             <TextView
                 android:id="@+id/status"
@@ -43,52 +34,52 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:text="Searching for DDJ-FLX4…"
                 android:textColor="@color/text_dim"
-                android:textSize="9sp" />
+                android:textSize="10sp" />
 
-            <Button
-                android:id="@+id/btn_update"
-                android:layout_width="wrap_content"
-                android:layout_height="34dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:text="CHECK UPDATES"
-                android:textSize="9sp"
-                android:textColor="@color/text" />
+            <io.github.timotheegrollier.flx4pocket.VuView
+                android:id="@+id/master_vu"
+                android:layout_width="72dp"
+                android:layout_height="5dp"
+                android:layout_marginEnd="8dp"
+                android:contentDescription="Master level" />
 
-            <Button
+            <TextView
                 android:id="@+id/btn_library"
-                android:layout_width="wrap_content"
-                android:layout_height="34dp"
-                android:layout_marginStart="3dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:text="LIBRARY"
-                android:textSize="9sp"
-                android:textColor="@color/text" />
+                style="@style/Btn.Wrap"
+                android:text="LIBRARY" />
 
-            <Button
+            <TextView
                 android:id="@+id/btn_audio"
-                android:layout_width="wrap_content"
-                android:layout_height="34dp"
-                android:layout_marginStart="3dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:text="AUDIO OUT"
-                android:textSize="9sp"
-                android:textColor="@color/text" />
+                style="@style/Btn.Wrap"
+                android:text="AUDIO" />
+
+            <TextView
+                android:id="@+id/btn_update"
+                style="@style/Btn.Wrap" />
         </LinearLayout>
 
+        <!-- Scrolling waveforms, stacked so the beats of both decks line up -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="124dp"
+            android:orientation="vertical">
+
+            <include
+                android:id="@+id/wave_a"
+                layout="@layout/view_wave" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/bg" />
+
+            <include
+                android:id="@+id/wave_b"
+                layout="@layout/view_wave" />
+        </LinearLayout>
+
+        <!-- Deck A | mixer | Deck B -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -103,121 +94,109 @@
                 android:layout_weight="1" />
 
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="300dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
-                android:background="@color/panel"
-                android:orientation="vertical"
-                android:padding="4dp">
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:orientation="vertical">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center"
-                android:text="MIXER"
-                android:textColor="@color/text_dim"
-                android:textSize="9sp"
-                android:textStyle="bold" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
 
-            <io.github.timotheegrollier.flx4pocket.VuView
-                android:id="@+id/mixer_vu"
-                android:layout_width="match_parent"
-                android:layout_height="46dp"
-                android:layout_marginTop="3dp" />
+                    <include
+                        android:id="@+id/channel_a"
+                        layout="@layout/view_channel" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="CROSSFADER"
-                android:textColor="@color/text_dim"
-                android:textSize="8sp" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layoutDirection="rtl"
+                        android:orientation="horizontal">
 
-            <SeekBar
-                android:id="@+id/mixer_crossfader"
-                android:layout_width="match_parent"
-                android:layout_height="26dp"
-                android:max="1000"
-                android:padding="0dp"
-                android:progress="500" />
+                        <include
+                            android:id="@+id/channel_b"
+                            layout="@layout/view_channel" />
+                    </LinearLayout>
+                </LinearLayout>
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="HEADPHONE MIX"
-                android:textColor="@color/text_dim"
-                android:textSize="8sp" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal">
 
-            <SeekBar
-                android:id="@+id/mixer_headphone"
-                android:layout_width="match_parent"
-                android:layout_height="26dp"
-                android:max="1000"
-                android:padding="0dp"
-                android:progress="500" />
+                    <TextView
+                        android:id="@+id/mixer_smart_cfx"
+                        style="@style/Btn.Wrap"
+                        android:text="CFX" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="MASTER"
-                android:textColor="@color/text_dim"
-                android:textSize="8sp" />
+                    <io.github.timotheegrollier.flx4pocket.FaderView
+                        android:id="@+id/mixer_crossfader"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Crossfader" />
 
-            <SeekBar
-                android:id="@+id/mixer_master"
-                android:layout_width="match_parent"
-                android:layout_height="26dp"
-                android:max="1000"
-                android:padding="0dp"
-                android:progress="800" />
+                    <TextView
+                        android:id="@+id/mixer_master_cue"
+                        style="@style/Btn.Wrap"
+                        android:text="M.CUE" />
+                </LinearLayout>
 
-            <ToggleButton
-                android:id="@+id/mixer_split"
-                android:layout_width="match_parent"
-                android:layout_height="34dp"
-                android:layout_marginTop="4dp"
-                android:backgroundTint="@color/panel_alt"
-                android:textColor="@color/text"
-                android:textOff="SPLIT CUE OFF"
-                android:textOn="SPLIT CUE ON"
-                android:textSize="8sp" />
+                <!-- Beat FX -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/mixer_cue_a"
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:layout_marginTop="3dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="CUE A"
-                android:textColor="@color/text"
-                android:textSize="9sp" />
+                    <TextView
+                        android:id="@+id/fx_select"
+                        style="@style/Btn"
+                        android:layout_weight="1.5" />
 
-            <Button
-                android:id="@+id/mixer_cue_b"
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:layout_marginTop="2dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="CUE B"
-                android:textColor="@color/text"
-                android:textSize="9sp" />
+                    <TextView
+                        android:id="@+id/fx_beat_down"
+                        style="@style/Btn"
+                        android:layout_weight="0.6"
+                        android:contentDescription="Shorter effect time"
+                        android:text="◄" />
 
-            <TextView
-                android:id="@+id/mixer_master_label"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
-                android:gravity="center"
-                android:text="MASTER: A"
-                android:textColor="@color/accent"
-                android:textSize="8sp" />
+                    <TextView
+                        android:id="@+id/fx_beats"
+                        android:layout_width="34dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:textColor="@color/accent"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/fx_beat_up"
+                        style="@style/Btn"
+                        android:layout_weight="0.6"
+                        android:contentDescription="Longer effect time"
+                        android:text="►" />
+
+                    <TextView
+                        android:id="@+id/fx_target"
+                        style="@style/Btn"
+                        android:layout_weight="0.9" />
+
+                    <io.github.timotheegrollier.flx4pocket.FaderView
+                        android:id="@+id/fx_depth"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1.6"
+                        android:contentDescription="Effect depth" />
+
+                    <TextView
+                        android:id="@+id/fx_on"
+                        style="@style/Btn"
+                        android:text="FX ON" />
+                </LinearLayout>
             </LinearLayout>
 
             <io.github.timotheegrollier.flx4pocket.DeckPanel
@@ -228,125 +207,65 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Library, shown on top of the decks -->
     <LinearLayout
         android:id="@+id/library_panel"
-        android:layout_width="380dp"
+        android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="end"
-        android:background="@color/panel"
-        android:elevation="12dp"
+        android:background="@color/bg"
+        android:clickable="true"
+        android:focusable="true"
         android:orientation="vertical"
-        android:padding="6dp"
         android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="44dp"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingEnd="4dp">
+
+            <EditText
+                android:id="@+id/library_search"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="Search tracks"
+                android:imeOptions="actionSearch|flagNoExtractUi"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
+                android:maxLines="1"
+                android:textColor="@color/text"
+                android:textColorHint="@color/text_hint"
+                android:textSize="15sp" />
 
             <TextView
-                android:layout_width="0dp"
+                android:id="@+id/library_info"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="LIBRARY"
-                android:textColor="@color/text"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:layout_marginEnd="10dp"
+                android:textColor="@color/text_dim"
+                android:textSize="11sp" />
 
-            <Button
+            <TextView
                 android:id="@+id/library_folder"
-                android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="FOLDER"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
+                style="@style/Btn.Wrap"
+                android:text="FOLDER" />
 
-            <Button
+            <TextView
                 android:id="@+id/library_close"
-                android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:layout_marginStart="3dp"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="X"
-                android:textColor="@color/text"
-                android:textSize="9sp" />
+                style="@style/Btn.Wrap"
+                android:text="CLOSE" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/library_path"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="middle"
-            android:maxLines="1"
-            android:text="Choose a music folder"
-            android:textColor="@color/text_dim"
-            android:textSize="8sp" />
 
         <ListView
             android:id="@+id/library_list"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="3dp"
             android:layout_weight="1"
-            android:background="@color/panel_alt"
             android:divider="@color/line"
-            android:dividerHeight="1dp"
-            android:fastScrollEnabled="true" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/library_target"
-                android:layout_width="0dp"
-                android:layout_height="34dp"
-                android:layout_weight="1"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="TARGET A"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
-
-            <Button
-                android:id="@+id/library_load_a"
-                android:layout_width="0dp"
-                android:layout_height="34dp"
-                android:layout_marginStart="3dp"
-                android:layout_weight="1"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="LOAD A"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
-
-            <Button
-                android:id="@+id/library_load_b"
-                android:layout_width="0dp"
-                android:layout_height="34dp"
-                android:layout_marginStart="3dp"
-                android:layout_weight="1"
-                android:backgroundTint="@color/panel_alt"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:minHeight="0dp"
-                android:text="LOAD B"
-                android:textColor="@color/text"
-                android:textSize="8sp" />
-        </LinearLayout>
+            android:dividerHeight="1dp" />
     </LinearLayout>
 </FrameLayout>

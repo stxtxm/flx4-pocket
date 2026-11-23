@@ -19,50 +19,45 @@ Pixel 9a ────────────────► FLX4 device port (U
 FLX4 master RCA / headphones ──► speakers / headphones
 ```
 
+The app cannot influence this: if the controller's lights do not come on, or
+it disconnects when the jog LEDs light up, it is not getting enough current.
 A powered USB-C hub can also work if it provides enough power, but the simplest
 reliable setup is the dedicated power port. A USB-A charger with a USB-A to
 USB-C cable is fine for the power port if the controller accepts that cable.
 
 Source: <https://www.pioneerdj.com/product/dj-controllers/ddj-flx4>
 
-## 2. USB audio into the FLX4 is not a reliable Android feature
+## 2. USB audio through the FLX4 depends on the phone
 
-The FLX4 contains a 4-channel USB audio interface: master stereo and headphone
-stereo. iOS apps such as rekordbox/djay can use it. On Android, exposing a
-multi-channel USB audio device to an app is OEM- and OS-dependent; Pioneer's own
-FLX4 page marks USB audio playback for iPhone/iPad and explicitly says it is not
-available on Android devices. Some phones and third-party apps can route a
-stereo USB output, but independent master/cue channels are widely reported as
-missing.
+The FLX4 contains a class-compliant four-channel USB audio interface: outputs
+1-2 feed MASTER, outputs 3-4 feed PHONES. Pioneer's own page lists USB audio
+playback for iPhone/iPad and says it is not available on Android devices with
+its apps, and Algoriddim reports that independent cue output is missing on
+many Android devices. Whether a given phone exposes all four channels to apps
+is decided by its USB audio HAL, not by this app.
 
-Consequences for this app:
+What the app does:
 
-- The audio engine always renders on the phone.
-- **AUDIO OUT** lists `AudioManager` sink devices and tries
-  `AudioTrack.setPreferredDevice()`. If your phone exposes the FLX4 (or another
-  USB DAC) as a stereo sink, you can select it. It is best-effort, not a
-  guaranteed driver.
-- Even when a USB sink appears, Android typically receives only the stereo
-  master; the FLX4's own headphone cue path is not fed by a four-channel stream.
-- The stable pre-cue solution on Android is a **stereo split cable**: enable
-  **SPLIT CUE**, master goes to the left channel and the cue bus to the right.
-  This is the same family of workaround rekordbox for Android uses with split
-  output. Audio becomes mono on each side.
+- When a USB audio output appears it is selected automatically.
+- If Android reports four or more channels for it, the app opens a
+  four-channel stream (channel index mask) with master on 1-2 and headphones
+  on 3-4. The status line then reads `master 1-2 + phones 3-4`.
+- If the device reports stereo only, or refuses the four-channel stream, the
+  app plays the master in stereo. The status line reads `stereo`. On the
+  FLX4 that normally means sound on MASTER and nothing on PHONES.
+- **Split cue** (AUDIO menu) is the fallback for any stereo output: master on
+  the left, headphones on the right, through a splitter cable.
+
+**This path is untested on hardware.** The code follows the documented Android
+APIs, but nobody has yet confirmed on a Pixel 9a which of the three cases
+applies. `docs/TESTING.md` lists the adb commands that show what the phone
+exposes.
 
 Sources:
 
-- <https://www.pioneerdj.com/product/dj-controllers/ddj-flx4> (USB audio section,
-  "Not available on Android devices")
-- <https://rekordbox.com/en/support/faq/connecting-to-dj-units-android/>
+- <https://www.pioneerdj.com/product/dj-controllers/ddj-flx4>
 - <https://community.algoriddim.com/t/how-to-pre-cue-in-djay-for-android/35402>
-  (Algoriddim: independent cue output is not supported on many Android devices;
-  newer Pioneer controllers have a mono switch as a workaround)
-- <https://support.alphatheta.com/en-US/articles/26320093306521> (FLX4 split
-  output guidance)
-
-The app does not claim 4-channel USB audio. If a future Android release exposes a
-stable multichannel UAC path, the engine can be extended with a second output
-pair, but that is outside the current platform contract.
+- <https://developer.android.com/reference/android/media/AudioFormat.Builder#setChannelIndexMask(int)>
 
 ## 3. The installer confirmation cannot be removed
 
@@ -91,7 +86,7 @@ different key under the same application id.
 
 - Tempo changes are implemented by resampling. There is no keylock yet, so
   moving the pitch fader changes pitch as well as speed.
-- Beat sync locks to the analysed grid and corrects drift by up to 0.2%; BPM
+- Beat sync locks to the analysed grid and corrects drift by up to 0.4%; BPM
   analysis can be wrong on rubato, live drums or very sparse intros. Use TAP or
   the tempo fader when the grid is wrong.
 - The shared audio clock removes inter-player drift, but MIDI + Android audio

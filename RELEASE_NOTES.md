@@ -1,17 +1,20 @@
-FLX4 Pocket 0.1.2
+FLX4 Pocket 0.2.0
 
-Standalone first install — includes the in-app updater fix.
+A new mixing screen, and sound that actually plays.
 
-- Fixed in-app updates on Pixel 9a / Android 15: the PackageInstaller result
-  status is now delivered through a mutable `PendingIntent`, so the app no
-  longer reports "No update found" when the update actually installed.
-- Play works standalone: the PLAY button gives feedback when no track is
-  loaded, and audio errors are shown in the status line.
-- Real-time horizontal spectra for both decks, like the famous DJ apps.
-- Bigger touch buttons; the version label shows the installed build.
-- In-app updater: checks every 30 minutes while the app is open, and the
-  update button always shows the latest version.
-- Unit tests for the FFT/spectrum DSP.
+- Fixed: 0.1.x produced no audio (the engine stopped its own mixer at start
+  and the decoder overwrote the audio it was about to play).
+- Scrolling three-band waveforms with beat grid, loops and hot cues. Drag to
+  scratch, pinch to zoom.
+- Mix without a controller: touch knobs and faders, pads (Hot Cue, Beat Loop,
+  Beat Jump, Pad FX 1/2), CDJ cue, pitch bend, sync.
+- Beat FX: echo, low-cut echo, reverb, flanger, phaser, trans. Smart CFX.
+- DDJ-FLX4: jog scratch, Beat FX section, Smart CFX, loop call, pad FX,
+  level meters; tempo fader and browse direction corrected.
+- USB audio: the controller's sound card is used automatically, with master
+  on outputs 1-2 and headphones on 3-4 when Android exposes four channels.
+- Updates download in the background from the top-bar button; nothing is
+  installed until you tap INSTALL.
 
-This is the version to install if you tried 0.1.1 on a Pixel 9a and the
-update never went through.
+Not yet verified on a real phone or controller. If the FLX4 does not power on
+from the phone, use its separate power port.

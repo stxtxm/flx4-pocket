@@ -10,12 +10,14 @@
     <color name="text">#F2F5F7</color>
     <color name="text_dim">#A5B0C2</color>
     <color name="text_hint">#6B7689</color>
+    <color name="on_accent">#0B0E13</color>
 
-    <!-- Accents -->
+    <!-- Deck accents -->
     <color name="accent_a">#22D3EE</color>
     <color name="accent_b">#F472B6</color>
 
-    <!-- Neutral accent used for updates and warnings -->
+    <!-- Neutral accent (FX, updates), status colours -->
     <color name="accent">#FBBF24</color>
+    <color name="ok">#34D399</color>
     <color name="danger">#EF4444</color>
 </resources>

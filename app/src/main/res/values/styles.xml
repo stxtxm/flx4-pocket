@@ -7,49 +7,55 @@
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:textColorPrimary">@color/text</item>
         <item name="android:textColorSecondary">@color/text_dim</item>
-        <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 
-    <style name="TransportButton" parent="android:style/Widget.Material.Button">
+    <!-- A button that shares its row equally with its siblings. -->
+    <style name="Btn">
         <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">44dp</item>
+        <item name="android:layout_height">match_parent</item>
         <item name="android:layout_weight">1</item>
-        <item name="android:layout_marginStart">2dp</item>
-        <item name="android:layout_marginEnd">2dp</item>
-        <item name="android:padding">0dp</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
-        <item name="android:minWidth">0dp</item>
-        <item name="android:minHeight">0dp</item>
-        <item name="android:textSize">11sp</item>
-        <item name="android:textAllCaps">false</item>
-        <item name="android:textColor">@color/text</item>
+        <item name="android:layout_margin">2dp</item>
+        <item name="android:background">@drawable/btn</item>
         <item name="android:backgroundTint">@color/panel_alt</item>
-    </style>
-
-    <style name="PadButton" parent="android:style/Widget.Material.Button">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">36dp</item>
-        <item name="android:layout_weight">1</item>
-        <item name="android:layout_margin">1dp</item>
-        <item name="android:padding">0dp</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
-        <item name="android:minWidth">0dp</item>
-        <item name="android:minHeight">0dp</item>
-        <item name="android:textSize">10sp</item>
-        <item name="android:textAllCaps">false</item>
-        <item name="android:textColor">@color/text</item>
-        <item name="android:backgroundTint">@color/panel_alt</item>
-    </style>
-
-    <style name="MiniLabel">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:textSize">9sp</item>
-        <item name="android:lineSpacingMultiplier">0.85</item>
-        <item name="android:textColor">@color/text_dim</item>
         <item name="android:gravity">center</item>
-        <item name="android:singleLine">true</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <!-- A button sized by its text (top bar, library). -->
+    <style name="Btn.Wrap">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_weight">0</item>
+        <item name="android:minWidth">44dp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+    </style>
+
+    <style name="Btn.Big">
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="Knob">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">0dp</item>
+        <item name="android:layout_weight">1</item>
+    </style>
+
+    <!-- Text drawn on top of a waveform. -->
+    <style name="WaveText">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:shadowColor">#FF000000</item>
+        <item name="android:shadowRadius">4</item>
+        <item name="android:shadowDy">1</item>
     </style>
 </resources>

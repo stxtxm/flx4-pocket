@@ -1,62 +1,71 @@
 package io.github.timotheegrollier.flx4pocket
 
-import android.os.SystemClock
 import kotlin.math.abs
-import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.roundToLong
 
 /**
- * One deck of the mixer. All mutating transport operations are synchronized on
- * the deck, so the audio thread can render a block without seeing a half-applied
- * seek or load.
+ * One deck of the mixer: transport, tempo, sync, loops, cues, scratching, EQ,
+ * filter and pad effects.
+ *
+ * Mutating operations are synchronized on the deck, so the audio thread
+ * renders a block without seeing a half-applied seek or load. Plain mixer
+ * parameters are volatile and read once per block. Android-free.
  */
 class Deck(val index: Int) {
 
     @Volatile
-    var source: AudioSource? = null
+    var source: PcmSource? = null
         private set
 
     @Volatile
     var title: String = ""
+        private set
     @Volatile
     var artist: String = ""
+        private set
     @Volatile
     var durationSec: Double = 0.0
+        private set
+
+    /** Filled progressively by the track analysis; null until it starts. */
+    @Volatile
+    var waveform: Waveform? = null
 
     @Volatile
     var playing: Boolean = false
         private set
-
     @Volatile
     var positionSec: Double = 0.0
+        private set
+
+    /** Audible playback speed of the last block (0 when stopped); lets the UI interpolate. */
+    @Volatile
+    var speed: Double = 0.0
         private set
 
     @Volatile
     var tempoRate: Double = 1.0
         private set
-
     @Volatile
-    var tempoRange: Double = 0.08
+    var tempoRange: Double = 0.10
         private set
-
     @Volatile
     var syncEnabled: Boolean = false
         private set
-
     @Volatile
     var syncFactor: Double = 1.0
         private set
-
     @Volatile
     var grid: BeatGrid = BeatGrid()
         private set
-
     @Volatile
     var gridConfidence: Double = 0.0
         private set
 
     @Volatile
-    var volume: Float = 0.8f
+    var volume: Float = 1f
     @Volatile
     var trim: Float = 0.5f
     @Volatile
@@ -67,10 +76,22 @@ class Deck(val index: Int) {
     var eqLow: Float = 0.5f
     @Volatile
     var filter: Float = 0.5f
+
+    /** Smart CFX: the filter knob gets a resonant sweep plus a synced echo. */
+    @Volatile
+    var smartCfx: Boolean = false
     @Volatile
     var cueEnabled: Boolean = false
     @Volatile
+    var quantize: Boolean = true
+
+    /** Pitch bend held from the touch UI, as a fraction of speed (e.g. 0.04). */
+    @Volatile
+    var nudge: Double = 0.0
+
+    @Volatile
     var cuePointSec: Double = 0.0
+        private set
     @Volatile
     var loopInSec: Double = -1.0
         private set
@@ -82,31 +103,34 @@ class Deck(val index: Int) {
         private set
     @Volatile
     var padMode: Int = PAD_HOT_CUE
-        private set
     @Volatile
     var hotCues: Array<Double?> = arrayOfNulls(8)
         private set
+
+    /** Pad currently held in a Pad FX mode, or -1. */
     @Volatile
-    var quantize: Boolean = true
+    var heldFxPad: Int = -1
+        private set
     @Volatile
-    var endReached: Boolean = false
+    var scratching: Boolean = false
         private set
 
-    /**
-     * Latest real-time energy bands (32 values, peak-normalized), refreshed
-     * every time the render window is filled while playing. Null when stopped.
-     */
-    @Volatile
-    var spectrum: FloatArray? = null
-        private set
+    val padFx = FxUnit(SAMPLE_RATE)
+    private val cfxEcho = FxUnit(SAMPLE_RATE).apply { beats = 0.75 }
 
-    // Audio-thread state.
-    private var cursor: Double = 0.0
-    private var tempoNormalized: Double = 0.0
-    private var syncBaseFactor: Double = 1.0
+    // State below is only touched while holding the deck lock.
+    private var cursor = 0.0 // source frames
+    private var tempoNormalized = 0.0
+    private var syncBaseFactor = 1.0
+    private var jogBend = 0.0
+    private var scratchPending = 0.0 // source frames still to travel
+    private var rolling = false
+    private var rollStart = 0.0
+    private var rollLength = 0.0
+    private var slipCursor = 0.0
+    private var cuePreview = false
+    private var misses = 0
     private val sample = FloatArray(2)
-    private val spectrumSamples = FloatArray(SPECTRUM_FRAMES)
-    private var spectrumPos = 0
 
     private val lowL = Biquad()
     private val lowR = Biquad()
@@ -116,24 +140,51 @@ class Deck(val index: Int) {
     private val highR = Biquad()
     private val filterL = Biquad()
     private val filterR = Biquad()
-
     private var lastLowDb = Double.NaN
     private var lastMidDb = Double.NaN
     private var lastHighDb = Double.NaN
     private var lastFilter = Float.NaN
+    private var lastSmart = false
     private var filterBypass = true
 
+    // ------------------------------------------------------------------
+    // Loading
+    // ------------------------------------------------------------------
+
     @Synchronized
-    fun load(newSource: AudioSource, title: String, artist: String, duration: Double) {
+    fun load(newSource: PcmSource, title: String, artist: String, duration: Double) {
         val old = source
+        clearState()
         source = newSource
         this.title = title
         this.artist = artist
         durationSec = if (duration > 0.0) duration else newSource.durationSec
+        old?.let(::retire)
+    }
+
+    @Synchronized
+    fun clear() {
+        val old = source
+        clearState()
+        old?.let(::retire)
+    }
+
+    @Synchronized
+    fun close() {
+        source?.close()
+        source = null
+        playing = false
+    }
+
+    private fun clearState() {
+        source = null
+        title = ""
+        artist = ""
+        durationSec = 0.0
+        waveform = null
+        playing = false
         cursor = 0.0
         positionSec = 0.0
-        playing = false
-        endReached = false
         grid = BeatGrid()
         gridConfidence = 0.0
         hotCues = arrayOfNulls(8)
@@ -141,87 +192,94 @@ class Deck(val index: Int) {
         loopInSec = -1.0
         loopOutSec = -1.0
         loopActive = false
-        spectrum = null
-        spectrumPos = 0
+        rolling = false
+        scratching = false
+        scratchPending = 0.0
+        cuePreview = false
+        heldFxPad = -1
+        padFx.enabled = false
         releaseSyncInternal()
         resetFilters()
-        if (old != null) retire(old)
     }
 
-    @Synchronized
-    fun clear() {
-        val old = source
-        source = null
-        playing = false
-        cursor = 0.0
-        positionSec = 0.0
-        title = ""
-        artist = ""
-        durationSec = 0.0
-        grid = BeatGrid()
-        hotCues = arrayOfNulls(8)
-        loopInSec = -1.0
-        loopOutSec = -1.0
-        loopActive = false
-        spectrum = null
-        spectrumPos = 0
-        releaseSyncInternal()
-        if (old != null) retire(old)
+    private fun retire(old: PcmSource) {
+        // The audio thread may still be inside a block that reads the old source.
+        Thread {
+            try {
+                Thread.sleep(300)
+            } catch (_: InterruptedException) {
+            }
+            old.close()
+        }.start()
     }
+
+    // ------------------------------------------------------------------
+    // Transport
+    // ------------------------------------------------------------------
+
+    fun hasTrack(): Boolean = source != null
 
     @Synchronized
     fun togglePlay() {
-        val src = source ?: return
+        if (source == null) return
         if (playing) {
             playing = false
+            cuePreview = false
             return
         }
-        if (endReached || (durationSec > 0 && positionSec >= durationSec - 0.05)) {
-            seekToInternal(0.0)
-        }
-        if (!src.hasFrame(cursor) && positionSec > 0.0) src.seek(positionSec)
-        endReached = false
+        if (durationSec > 0 && positionSec >= durationSec - 0.05) seekToInternal(0.0)
         playing = true
     }
 
-    /**
-     * CDJ-style CUE: while playing, jump to the cue and stop. While paused, set
-     * the cue at the current position.
-     */
     @Synchronized
     fun pause() {
         playing = false
+        cuePreview = false
     }
 
+    /**
+     * CDJ-style CUE press. Playing: back to the cue point and stop. Paused on
+     * the cue point: play for as long as the button is held. Paused elsewhere:
+     * set the cue point here.
+     */
     @Synchronized
-    fun resume() {
+    fun cueDown() {
         if (source == null) return
-        if (endReached) seekToInternal(0.0)
-        endReached = false
-        playing = true
-    }
-
-    @Synchronized
-    fun cue() {
-        if (source == null) return
-        if (playing) {
-            playing = false
-            seekToInternal(cuePointSec)
-        } else {
-            cuePointSec = positionSec
+        when {
+            playing -> {
+                playing = false
+                seekToInternal(cuePointSec)
+            }
+            abs(positionSec - cuePointSec) < 0.03 -> {
+                cuePreview = true
+                playing = true
+            }
+            else -> {
+                cuePointSec = snap(positionSec)
+                seekToInternal(cuePointSec)
+            }
         }
     }
 
     @Synchronized
-    fun seekTo(seconds: Double) {
-        seekToInternal(seconds)
+    fun cueUp() {
+        if (!cuePreview) return
+        cuePreview = false
+        playing = false
+        seekToInternal(cuePointSec)
     }
 
     @Synchronized
-    fun setCuePoint(seconds: Double) {
-        cuePointSec = seconds.coerceIn(0.0, maxOf(0.0, durationSec))
-    }
+    fun seekTo(seconds: Double) = seekToInternal(seconds)
 
+    @Synchronized
+    fun seekBy(seconds: Double) = seekToInternal(positionSec + seconds)
+
+    // ------------------------------------------------------------------
+    // Tempo, bend, scratch
+    // ------------------------------------------------------------------
+
+    /** [normalized] is -1 (slowest) .. +1 (fastest) across the tempo range. */
     @Synchronized
     fun setTempoNormalized(normalized: Double) {
         tempoNormalized = normalized.coerceIn(-1.0, 1.0)
@@ -229,36 +287,53 @@ class Deck(val index: Int) {
         releaseSyncInternal()
     }
 
+    val tempoPosition: Double get() = if (tempoRange > 0.0) (tempoRate - 1.0) / tempoRange else 0.0
+
     @Synchronized
     fun cycleTempoRange() {
-        tempoRange = when {
-            tempoRange < 0.08 -> 0.08
-            tempoRange < 0.12 -> 0.16
-            tempoRange < 0.20 -> 0.25
-            else -> 0.06
-        }
+        tempoRange = TEMPO_RANGES[(TEMPO_RANGES.indexOfFirst { it >= tempoRange - 1e-9 } + 1) % TEMPO_RANGES.size]
         tempoRate = 1.0 + tempoNormalized * tempoRange
         releaseSyncInternal()
     }
 
+    /** Jog-wheel pitch bend: each tick adds a short-lived speed offset. */
     @Synchronized
-    fun engageSync(master: Deck) {
-        if (!grid.valid || !master.grid.valid || source == null || master.source == null) return
-        val targetBpm = master.effectiveBpm()
-        val baseBpm = grid.bpm * tempoRate
-        if (targetBpm <= 0.0 || baseBpm <= 0.0) return
-        syncFactor = (targetBpm / baseBpm).coerceIn(0.5, 1.5)
-        syncBaseFactor = syncFactor
-        syncEnabled = true
-        val errorBeats = BeatGrid.phaseError(master.phase(), phase())
-        val deltaSec = errorBeats * 60.0 / targetBpm
-        seekToInternal(positionSec + deltaSec)
+    fun bend(ticks: Int) {
+        if (playing) {
+            // Decaying by 10 % per block, 0.02 shifts the track about 1 ms per tick.
+            jogBend = (jogBend + ticks * 0.02).coerceIn(-0.5, 0.5)
+        } else {
+            seekToInternal(positionSec + ticks * JOG_TICK_SECONDS)
+        }
     }
 
     @Synchronized
-    fun releaseSync() {
-        releaseSyncInternal()
+    fun scratchBegin() {
+        if (source == null) return
+        scratching = true
+        scratchPending = 0.0
     }
+
+    /** Moves the "record" by [seconds] of track time; the audio follows within a few ms. */
+    @Synchronized
+    fun scratchMove(seconds: Double) {
+        val src = source ?: return
+        if (!scratching) {
+            seekToInternal(positionSec + seconds)
+            return
+        }
+        scratchPending += seconds * src.sampleRate
+    }
+
+    @Synchronized
+    fun scratchEnd() {
+        scratching = false
+        scratchPending = 0.0
+    }
+
+    // ------------------------------------------------------------------
+    // Beat grid and sync
+    // ------------------------------------------------------------------
 
     @Synchronized
     fun setGrid(bpm: Double, anchorSec: Double, confidence: Double) {
@@ -266,193 +341,322 @@ class Deck(val index: Int) {
         gridConfidence = confidence
     }
 
+    fun phase(): Double = if (grid.valid) grid.phase(positionSec) else 0.0
+
+    fun effectiveBpm(): Double = if (grid.valid) grid.bpm * tempoRate * syncFactor else 0.0
+
+    /** Position in beats from the grid anchor, 0 without a grid. */
+    fun beatPosition(): Double =
+        if (grid.valid) (positionSec - grid.anchorSec) / grid.secondsPerBeat() else 0.0
+
+    /** Track seconds per beat; assumes 120 BPM until the grid is known. */
+    private fun beatSeconds(): Double = if (grid.valid) grid.secondsPerBeat() else 0.5
+
+    /** Nearest beat when quantize is on and a grid exists, otherwise [seconds] itself. */
+    private fun snap(seconds: Double): Double {
+        if (!quantize || !grid.valid) return seconds
+        val beat = grid.secondsPerBeat()
+        return grid.anchorSec + ((seconds - grid.anchorSec) / beat).roundToLong() * beat
+    }
+
+    @Synchronized
+    fun engageSync(master: Deck): Boolean {
+        if (!grid.valid || !master.grid.valid || source == null) return false
+        val targetBpm = master.effectiveBpm()
+        val baseBpm = grid.bpm * tempoRate
+        if (targetBpm <= 0.0 || baseBpm <= 0.0) return false
+        syncFactor = (targetBpm / baseBpm).coerceIn(0.5, 2.0)
+        syncBaseFactor = syncFactor
+        syncEnabled = true
+        if (master.playing) {
+            val errorBeats = BeatGrid.phaseError(master.phase(), phase())
+            seekToInternal(positionSec + errorBeats * grid.secondsPerBeat())
+        }
+        return true
+    }
+
+    @Synchronized
+    fun releaseSync() = releaseSyncInternal()
+
+    private fun releaseSyncInternal() {
+        syncEnabled = false
+        syncFactor = 1.0
+        syncBaseFactor = 1.0
+    }
+
+    // ------------------------------------------------------------------
+    // Loops
+    // ------------------------------------------------------------------
+
     @Synchronized
     fun setLoopIn() {
-        loopInSec = positionSec
+        if (source == null) return
+        loopInSec = snap(positionSec)
         loopOutSec = -1.0
         loopActive = false
     }
 
     @Synchronized
     fun setLoopOut() {
-        if (loopInSec < 0.0) loopInSec = positionSec
-        loopOutSec = positionSec
-        loopActive = loopOutSec > loopInSec + 0.02
-        if (loopActive) seekToInternal(loopInSec)
+        if (source == null || loopInSec < 0.0) return
+        val out = snap(positionSec)
+        if (out <= loopInSec + MIN_LOOP_SECONDS) return
+        loopOutSec = out
+        loopActive = true
+        seekToInternal(loopInSec)
     }
 
+    /** RELOOP/EXIT: leaves the active loop, or re-enters the last one. */
     @Synchronized
     fun toggleLoop() {
         if (loopActive) {
             loopActive = false
-        } else if (loopInSec >= 0.0 && loopOutSec > loopInSec + 0.02) {
+        } else if (loopInSec >= 0.0 && loopOutSec > loopInSec) {
             loopActive = true
             seekToInternal(loopInSec)
         }
     }
 
     @Synchronized
-    fun setBeatLoop(beats: Double) {
-        if (!grid.valid) return
-        val secondsPerBeat = grid.secondsPerBeat()
-        val beat = grid.beatIndex(positionSec)
-        val start = grid.anchorSec + beat * secondsPerBeat
-        loopInSec = start
-        loopOutSec = start + beats * secondsPerBeat
+    fun exitLoop() {
+        loopActive = false
+    }
+
+    /** Starts a loop of [beats] at the current beat; the same size again exits it. */
+    @Synchronized
+    fun toggleBeatLoop(beats: Double) {
+        if (source == null) return
+        if (loopActive && abs(loopBeats() - beats) < 1e-3) {
+            loopActive = false
+            return
+        }
+        val beat = beatSeconds()
+        val start = if (grid.valid && quantize) {
+            grid.anchorSec + grid.beatIndex(positionSec) * beat
+        } else {
+            positionSec
+        }
+        setLoop(start, start + beats * beat)
+    }
+
+    /** Auto loop of [beats] starting at the loop-in point (IN / 4 BEAT long press). */
+    @Synchronized
+    fun loopFromIn(beats: Double) {
+        if (source == null || loopInSec < 0.0) return
+        setLoop(loopInSec, loopInSec + beats * beatSeconds())
+    }
+
+    /** Halves ([factor] 0.5) or doubles (2.0) the active loop. */
+    @Synchronized
+    fun scaleLoop(factor: Double) {
+        if (!loopActive) return
+        val length = (loopOutSec - loopInSec) * factor
+        if (length < MIN_LOOP_SECONDS || length > 120.0) return
+        setLoop(loopInSec, loopInSec + length)
+    }
+
+    /** Length of the active loop in beats, 0 when no loop is active. */
+    fun loopBeats(): Double = if (loopActive) (loopOutSec - loopInSec) / beatSeconds() else 0.0
+
+    private fun setLoop(start: Double, end: Double) {
+        loopInSec = start.coerceAtLeast(0.0)
+        loopOutSec = end
         loopActive = true
-        seekToInternal(start)
+        if (positionSec < loopInSec || positionSec >= loopOutSec) seekToInternal(loopInSec)
     }
 
     @Synchronized
     fun beatJump(beats: Double) {
-        if (!grid.valid) return
-        seekToInternal(positionSec + beats * grid.secondsPerBeat())
+        if (source != null) seekToInternal(positionSec + beats * beatSeconds())
     }
 
+    // ------------------------------------------------------------------
+    // Pads
+    // ------------------------------------------------------------------
+
+    /** Restores saved hot cues after a track load. */
     @Synchronized
-    fun triggerHotCue(slot: Int) {
-        if (slot !in 0 until 8 || source == null) return
-        val existing = hotCues[slot]
-        if (existing == null) {
-            val target = if (quantize && grid.valid) {
-                val spb = grid.secondsPerBeat()
-                grid.anchorSec + Math.round((positionSec - grid.anchorSec) / spb) * spb
-            } else {
-                positionSec
+    fun setHotCues(cues: Array<Double?>) {
+        hotCues = cues.copyOf(8)
+    }
+
+    /**
+     * A performance pad was pressed. The touch UI passes the deck's own
+     * [padMode]; the controller passes the mode its pad note belongs to.
+     */
+    @Synchronized
+    fun padDown(mode: Int, pad: Int, shift: Boolean = false) {
+        if (pad !in 0..7 || source == null) return
+        when (mode) {
+            PAD_HOT_CUE -> {
+                val existing = hotCues[pad]
+                when {
+                    shift -> hotCues = hotCues.copyOf().also { it[pad] = null }
+                    existing == null -> hotCues = hotCues.copyOf().also { it[pad] = snap(positionSec) }
+                    else -> seekToInternal(existing)
+                }
             }
-            hotCues = hotCues.copyOf().also { it[slot] = target }
-        } else {
-            seekToInternal(existing)
+            PAD_BEAT_LOOP -> toggleBeatLoop(LOOP_BEATS[pad])
+            PAD_BEAT_JUMP -> beatJump(JUMP_BEATS[pad])
+            PAD_FX1, PAD_FX2 -> {
+                releaseFxPad()
+                val fx = (if (mode == PAD_FX1) PAD_FX1_SLOTS else PAD_FX2_SLOTS)[pad]
+                heldFxPad = pad
+                if (fx.type == null) {
+                    startRoll(fx.beats)
+                } else {
+                    padFx.type = fx.type
+                    padFx.beats = fx.beats
+                    padFx.depth = 0.65f
+                    padFx.enabled = true
+                }
+            }
         }
     }
 
     @Synchronized
-    fun deleteHotCue(slot: Int) {
-        if (slot !in 0 until 8) return
-        hotCues = hotCues.copyOf().also { it[slot] = null }
+    fun padUp(mode: Int, pad: Int) {
+        if ((mode == PAD_FX1 || mode == PAD_FX2) && pad == heldFxPad) releaseFxPad()
     }
 
-    @Synchronized
-    fun setPadMode(mode: Int) {
-        padMode = mode
+    private fun releaseFxPad() {
+        heldFxPad = -1
+        padFx.enabled = false
+        if (rolling) {
+            // Slip: resume where the track would be had the roll never happened.
+            rolling = false
+            seekToInternal(slipCursor / (source?.sampleRate ?: SAMPLE_RATE))
+        }
     }
 
-    fun phase(): Double = if (grid.valid) grid.phase(positionSec) else 0.0
+    private fun startRoll(beats: Double) {
+        val src = source ?: return
+        rollStart = cursor
+        rollLength = max(beats * beatSeconds(), MIN_LOOP_SECONDS) * src.sampleRate
+        slipCursor = cursor
+        rolling = true
+    }
 
-    fun effectiveBpm(): Double = if (grid.valid) grid.bpm * tempoRate * syncFactor else 0.0
-
-    fun hasTrack(): Boolean = source != null
+    // ------------------------------------------------------------------
+    // Audio thread
+    // ------------------------------------------------------------------
 
     /**
-     * Renders [frames] at [SAMPLE_RATE]. The returned audio is post-trim,
-     * post-EQ and post-filter, but pre-channel-fader and pre-crossfader, which
-     * lets the engine build both the master and the cue buses from it.
+     * Renders [frames] at [SAMPLE_RATE]. The result is post-trim, post-EQ,
+     * post-filter and post-pad-FX, but pre-fader, so the engine can build both
+     * the master and the cue bus from it.
      */
     @Synchronized
     fun render(frames: Int, outL: FloatArray, outR: FloatArray, syncMaster: Deck?) {
         val src = source
-        if (src == null) {
+        if (src == null || (!playing && !scratching)) {
             java.util.Arrays.fill(outL, 0, frames, 0f)
             java.util.Arrays.fill(outR, 0, frames, 0f)
-            positionSec = 0.0
-            return
-        }
-        if (!playing) {
-            java.util.Arrays.fill(outL, 0, frames, 0f)
-            java.util.Arrays.fill(outR, 0, frames, 0f)
-            positionSec = cursor / src.sampleRate
-            spectrum = null
+            speed = 0.0
+            jogBend = 0.0
+            renderFx(outL, outR, frames) // let echo and reverb tails ring out
             return
         }
 
         val rate = src.sampleRate.toDouble()
-        val effectiveSync = if (syncEnabled && syncMaster != null && syncMaster.grid.valid) {
-            val error = BeatGrid.phaseError(syncMaster.phase(), phase())
-            syncBaseFactor * (1.0 + (error * 0.02).coerceIn(-0.002, 0.002))
+        val ratio = rate / SAMPLE_RATE
+        val playStep = if (playing) {
+            val sync = if (syncEnabled && syncMaster != null && syncMaster.grid.valid && syncMaster.playing) {
+                val error = BeatGrid.phaseError(syncMaster.phase(), phase())
+                syncBaseFactor * (1.0 + (error * 0.05).coerceIn(-0.004, 0.004))
+            } else {
+                syncFactor
+            }
+            jogBend *= 0.9
+            ratio * tempoRate * sync * (1.0 + nudge + jogBend)
         } else {
-            syncFactor
+            0.0
         }
-        val speed = tempoRate * effectiveSync
-        val step = rate / SAMPLE_RATE * speed
-        val loopInFrames = loopInSec * rate
-        val loopOutFrames = loopOutSec * rate
-        val looping = loopActive && loopOutSec > loopInSec + 0.02
+        val step = if (scratching) {
+            // Spread the pending movement over a few blocks: smooth, but still tight.
+            val move = scratchPending * 0.4
+            scratchPending -= move
+            move / frames
+        } else {
+            playStep
+        }
+        speed = step / ratio
+
+        val wrap = rolling || loopActive
+        val wrapStart = if (rolling) rollStart else loopInSec * rate
+        val wrapLength = if (rolling) rollLength else (loopOutSec - loopInSec) * rate
         val durationFrames = durationSec * rate
 
         updateFilters()
-        val trimGain = MixerMath.trimGain(trim)
+        val gain = MixerMath.trimGain(trim)
         var i = 0
         while (i < frames) {
-            if (looping && cursor >= loopOutFrames) {
-                cursor -= (loopOutFrames - loopInFrames)
-                resetFilters()
+            if (wrap && wrapLength > 1.0 && cursor >= wrapStart + wrapLength) {
+                cursor = wrapStart + (cursor - wrapStart) % wrapLength
                 if (!src.hasFrame(cursor)) src.seek(cursor / rate)
             }
-            val available = src.sampleFrame(cursor, sample)
-            if (!available) {
+            if (!src.sampleFrame(cursor, sample)) {
+                // Not decoded yet: output silence and hold the position.
                 outL[i] = 0f
                 outR[i] = 0f
                 i++
+                if (++misses > SAMPLE_RATE / 4) {
+                    misses = 0
+                    if (durationFrames > 0.0 && cursor > durationFrames - rate) {
+                        playing = false // metadata duration was longer than the audio
+                    } else {
+                        src.seek((cursor / rate - if (step < 0) 2.0 else 0.0).coerceAtLeast(0.0))
+                    }
+                }
                 continue
             }
+            misses = 0
 
-            spectrumSamples[spectrumPos] = sample[0]
-            spectrumPos = (spectrumPos + 1) % spectrumSamples.size
-            if (spectrumPos == 0) {
-                spectrum = Spectrum.spectrum(spectrumSamples)
-            }
-
-            var left = sample[0].toDouble()
-            var right = sample[1].toDouble()
-            left = highL.process(midL.process(lowL.process(left)))
-            right = highR.process(midR.process(lowR.process(right)))
+            var left = highL.process(midL.process(lowL.process(sample[0].toDouble())))
+            var right = highR.process(midR.process(lowR.process(sample[1].toDouble())))
             if (!filterBypass) {
                 left = filterL.process(left)
                 right = filterR.process(right)
             }
-
-            outL[i] = (left * trimGain).toFloat()
-            outR[i] = (right * trimGain).toFloat()
-            cursor += step
+            outL[i] = (left * gain).toFloat()
+            outR[i] = (right * gain).toFloat()
             i++
 
-            if (!looping && durationFrames > 0.0 && cursor >= durationFrames) {
+            cursor += step
+            if (rolling) slipCursor += playStep
+            if (cursor < 0.0) cursor = 0.0
+            if (durationFrames > 0.0 && cursor >= durationFrames) {
                 cursor = durationFrames
-                playing = false
-                endReached = true
-                while (i < frames) {
-                    outL[i] = 0f
-                    outR[i] = 0f
-                    i++
+                if (!scratching) {
+                    playing = false
+                    java.util.Arrays.fill(outL, i, frames, 0f)
+                    java.util.Arrays.fill(outR, i, frames, 0f)
+                    break
                 }
             }
         }
         positionSec = cursor / rate
+        renderFx(outL, outR, frames)
     }
 
-    @Synchronized
-    fun close() {
-        val old = source
-        source = null
-        old?.close()
+    private fun renderFx(outL: FloatArray, outR: FloatArray, frames: Int) {
+        val bpm = effectiveBpm()
+        val beatPosition = beatPosition()
+        val amount = abs(MixerMath.filterAmount(filter))
+        cfxEcho.enabled = smartCfx && amount >= FILTER_DEAD_ZONE
+        // Keep the last depth once the knob is back at centre, so the echo fades out naturally.
+        if (cfxEcho.enabled) cfxEcho.depth = amount * 0.6f
+        cfxEcho.process(outL, outR, frames, bpm, beatPosition)
+        padFx.process(outL, outR, frames, bpm, beatPosition)
     }
 
     private fun seekToInternal(seconds: Double) {
         val src = source ?: return
-        val clamped = seconds.coerceIn(0.0, maxOf(0.0, durationSec))
-        val newCursor = clamped * src.sampleRate
-        val jumped = abs(newCursor - cursor) > src.sampleRate * 0.25
-        cursor = newCursor
-        positionSec = cursor / src.sampleRate
-        endReached = false
-        if (jumped) resetFilters()
+        val clamped = seconds.coerceIn(0.0, max(0.0, durationSec))
+        cursor = clamped * src.sampleRate
+        positionSec = clamped
+        misses = 0
         if (!src.hasFrame(cursor)) src.seek(clamped)
-    }
-
-    private fun releaseSyncInternal() {
-        syncEnabled = false
-        syncFactor = 1.0
-        syncBaseFactor = 1.0
     }
 
     private fun resetFilters() {
@@ -463,63 +667,94 @@ class Deck(val index: Int) {
     }
 
     private fun updateFilters() {
+        val fs = SAMPLE_RATE.toDouble()
         val lowDb = MixerMath.eqDecibels(eqLow)
         if (lowDb != lastLowDb) {
-            lowL.setLowShelf(SAMPLE_RATE.toDouble(), 120.0, lowDb)
-            lowR.setLowShelf(SAMPLE_RATE.toDouble(), 120.0, lowDb)
+            lowL.setLowShelf(fs, 120.0, lowDb)
+            lowR.setLowShelf(fs, 120.0, lowDb)
             lastLowDb = lowDb
         }
         val midDb = MixerMath.eqDecibels(eqMid)
         if (midDb != lastMidDb) {
-            midL.setPeaking(SAMPLE_RATE.toDouble(), 1000.0, midDb)
-            midR.setPeaking(SAMPLE_RATE.toDouble(), 1000.0, midDb)
+            midL.setPeaking(fs, 1000.0, midDb)
+            midR.setPeaking(fs, 1000.0, midDb)
             lastMidDb = midDb
         }
         val highDb = MixerMath.eqDecibels(eqHigh)
         if (highDb != lastHighDb) {
-            highL.setHighShelf(SAMPLE_RATE.toDouble(), 8000.0, highDb)
-            highR.setHighShelf(SAMPLE_RATE.toDouble(), 8000.0, highDb)
+            highL.setHighShelf(fs, 8000.0, highDb)
+            highR.setHighShelf(fs, 8000.0, highDb)
             lastHighDb = highDb
         }
 
         val amount = MixerMath.filterAmount(filter)
-        val bypass = abs(amount) < 0.02
-        if (bypass != filterBypass || (!bypass && amount != lastFilter)) {
-            filterBypass = bypass
-            if (!bypass) {
-                val cutoff = if (amount < 0.0) {
-                    (20000.0 * (1.0 + amount).pow(3.0)).coerceIn(30.0, 20000.0)
-                } else {
-                    (20.0 + 19980.0 * amount.toDouble().pow(3.0)).coerceIn(20.0, 20000.0)
-                }
-                if (amount < 0.0) {
-                    filterL.setLowPass(SAMPLE_RATE.toDouble(), cutoff)
-                    filterR.setLowPass(SAMPLE_RATE.toDouble(), cutoff)
-                } else {
-                    filterL.setHighPass(SAMPLE_RATE.toDouble(), cutoff)
-                    filterR.setHighPass(SAMPLE_RATE.toDouble(), cutoff)
-                }
-            }
-            lastFilter = amount
+        val smart = smartCfx
+        val bypass = abs(amount) < FILTER_DEAD_ZONE
+        if (bypass == filterBypass && (bypass || (amount == lastFilter && smart == lastSmart))) return
+        if (filterBypass && !bypass) {
+            filterL.reset()
+            filterR.reset()
+        }
+        filterBypass = bypass
+        lastFilter = amount
+        lastSmart = smart
+        if (bypass) return
+        val q = if (smart) 2.5 else 0.9
+        if (amount < 0f) {
+            val cutoff = (20000.0 * (1.0 + amount).toDouble().pow(3.0)).coerceIn(60.0, 20000.0)
+            filterL.setLowPass(fs, cutoff, q)
+            filterR.setLowPass(fs, cutoff, q)
+        } else {
+            val cutoff = (20.0 + 12000.0 * amount.toDouble().pow(3.0)).coerceIn(20.0, 12000.0)
+            filterL.setHighPass(fs, cutoff, q)
+            filterR.setHighPass(fs, cutoff, q)
         }
     }
 
-    private fun retire(old: AudioSource) {
-        Thread {
-            try {
-                Thread.sleep(1500)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-            old.close()
-        }.start()
-    }
+    /** A Pad FX slot; a null [type] is a slip loop roll. */
+    class PadFx(val label: String, val type: FxType?, val beats: Double)
 
     companion object {
         const val SAMPLE_RATE = 44100
+
+        // Pad modes, numbered like the high nibble of the FLX4 pad notes.
         const val PAD_HOT_CUE = 0
-        const val PAD_BEAT_LOOP = 1
+        const val PAD_FX1 = 1
         const val PAD_BEAT_JUMP = 2
-        private const val SPECTRUM_FRAMES = 256
+        const val PAD_SAMPLER = 3
+        const val PAD_KEYBOARD = 4
+        const val PAD_FX2 = 5
+        const val PAD_BEAT_LOOP = 6
+        const val PAD_KEY_SHIFT = 7
+
+        val TEMPO_RANGES = doubleArrayOf(0.06, 0.10, 0.16, 0.50)
+        val LOOP_BEATS = doubleArrayOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
+        val JUMP_BEATS = doubleArrayOf(-1.0, 1.0, -2.0, 2.0, -4.0, 4.0, -8.0, 8.0)
+
+        val PAD_FX1_SLOTS = arrayOf(
+            PadFx("ECHO 1/4", FxType.ECHO, 0.25),
+            PadFx("ECHO 1/2", FxType.ECHO, 0.5),
+            PadFx("ECHO 3/4", FxType.ECHO, 0.75),
+            PadFx("ECHO 1", FxType.ECHO, 1.0),
+            PadFx("ROLL 1/8", null, 0.125),
+            PadFx("ROLL 1/4", null, 0.25),
+            PadFx("ROLL 1/2", null, 0.5),
+            PadFx("ROLL 1", null, 1.0)
+        )
+        val PAD_FX2_SLOTS = arrayOf(
+            PadFx("LC ECHO 1/2", FxType.LOW_CUT_ECHO, 0.5),
+            PadFx("LC ECHO 1", FxType.LOW_CUT_ECHO, 1.0),
+            PadFx("REVERB", FxType.REVERB, 1.0),
+            PadFx("FLANGER", FxType.FLANGER, 1.0),
+            PadFx("PHASER", FxType.PHASER, 1.0),
+            PadFx("TRANS 1/8", FxType.TRANS, 0.125),
+            PadFx("TRANS 1/4", FxType.TRANS, 0.25),
+            PadFx("TRANS 1/2", FxType.TRANS, 0.5)
+        )
+
+        /** One jog tick: the platter is 720 ticks per turn at 33 1/3 rpm. */
+        const val JOG_TICK_SECONDS = 1.8 / 720.0
+        private const val MIN_LOOP_SECONDS = 0.02
+        private const val FILTER_DEAD_ZONE = 0.02f
     }
 }

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The FLX4 is a USB MIDI controller; no runtime permission is needed for
-         USB MIDI. The app is intentionally MIDI-only on Android because stock
-         Android cannot expose the FLX4's multi-channel USB audio interface. -->
-    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
-    <uses-feature android:name="android.software.midi" android:required="true" />
+    <!-- The FLX4 is a class-compliant USB MIDI + audio device, so no runtime
+         permission is needed. Neither feature is required: the app is fully
+         usable from the touch screen without a controller. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.software.midi" android:required="false" />
 
     <!-- In-app updates: check the GitHub release manifest and download the APK. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -25,7 +25,8 @@
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTask"
-            android:screenOrientation="sensorLandscape">
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustNothing">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -62,4 +62,33 @@ class PcmRingTest {
         assertTrue(ring.sample(10.0, out))
         assertEquals(2.0f, out[0], 1e-6f)
     }
+
+    @Test
+    fun `decoder is throttled to a window ahead of the reader`() {
+        val ring = PcmRing(sampleRate = 100, seconds = 4)
+        val out = FloatArray(2)
+        assertTrue("an empty ring wants data", ring.wantsData(aheadFrames = 200))
+
+        ring.write(0, FloatArray(200 * 2) { 0.5f }, 200)
+        assertFalse("200 frames ahead of frame 0 is enough", ring.wantsData(200))
+
+        // The mixer reads on: the decoder must be allowed to continue...
+        assertTrue(ring.sample(150.0, out))
+        assertTrue(ring.wantsData(200))
+
+        // ...and what it then writes must not evict what is about to play.
+        ring.write(200, FloatArray(150 * 2) { 0.25f }, 150)
+        assertFalse(ring.wantsData(200))
+        assertTrue(ring.sample(151.0, out))
+        assertEquals(0.5f, out[0], 1e-6f)
+    }
+
+    @Test
+    fun `a seek restarts the throttle window at the new position`() {
+        val ring = PcmRing(sampleRate = 100, seconds = 4)
+        ring.write(0, FloatArray(300 * 2), 300)
+        assertFalse(ring.wantsData(200))
+        ring.reset(5000)
+        assertTrue(ring.wantsData(200))
+    }
 }

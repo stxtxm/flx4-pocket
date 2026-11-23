@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.0
+
+A rewrite of the screen and of most of the audio path.
+
+### Fixed
+
+- **No sound in 0.1.x.** The audio engine reset its own output during
+  construction, so the mixer thread exited at once; and the track decoder ran
+  unthrottled, overwriting the audio that was about to be played. Both are
+  fixed, the second with a regression test.
+- The FLX4 tempo fader was inverted and the browse knob scrolled backwards.
+- 14-bit controls of deck 1 and deck 2 shared their LSB/MSB memory.
+- Background update checks no longer show "No update found" toasts.
+
+### Added
+
+- Scrolling three-band waveforms with beat grid, loop, cue and hot-cue
+  markers; drag to scratch, pinch to zoom; track overview with needle search.
+- Touch mixer: knobs, faders, level meters, crossfader, pitch bend, CDJ cue.
+- Pad modes Hot Cue, Beat Loop, Beat Jump, Pad FX 1 and Pad FX 2; slip loop
+  roll; loop halve / double; hot cues saved per track.
+- Beat FX (echo, low-cut echo, reverb, flanger, phaser, trans) on a deck or
+  the master, Smart CFX, master limiter.
+- FLX4: jog scratch / bend / search, Beat FX section, Smart CFX, master cue,
+  master and headphone level, loop call buttons, pad FX pads, more LEDs and
+  the channel level meters.
+- USB audio: automatic routing to the controller, four-channel output
+  (master 1-2, headphones 3-4) when Android exposes it.
+- Library search and per-row load buttons; the app no longer requires USB
+  host or MIDI support to install.
+- Non-blocking in-app updater on a single button.
+- Tests: MIDI address table, effects, waveform, deck behaviour, decoder
+  throttling, and a Robolectric smoke test of the real screen.
+
+### Removed
+
+- The 32-band spectrum bars (replaced by the waveforms).
+
+### Not verified
+
+No phone or controller was available for this build. Controller power from
+the phone and four-channel USB audio depend on the device; see
+`docs/ANDROID-LIMITS.md` and the checklist in `docs/TESTING.md`.
+
 ## 0.1.2 — 2026-11-23
 
 Standalone-first install: the in-app updater works on Pixel 9a again, play

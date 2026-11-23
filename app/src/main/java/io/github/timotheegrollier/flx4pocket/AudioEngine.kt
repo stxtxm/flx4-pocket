@@ -2,6 +2,7 @@ package io.github.timotheegrollier.flx4pocket
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -12,18 +13,25 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * A small sample-clock mixer: two decks are rendered into one AudioTrack, so
- * beat sync never depends on two independent players staying aligned.
+ * A sample-clock mixer: both decks are rendered into one AudioTrack, so beat
+ * sync never depends on two independent players staying aligned.
  *
- * Output modes:
- *  - normal: the master bus in stereo;
- *  - split cue: master on the left channel, headphone cue on the right, for a
- *    stereo splitter cable on phones without a second output.
+ * Output layouts:
+ *  - stereo: the master bus;
+ *  - split cue: master (mono) on the left, headphones (mono) on the right,
+ *    for a splitter cable on a stereo output;
+ *  - four channels: master on 1-2 and headphones on 3-4, used automatically
+ *    when a USB interface such as the DDJ-FLX4 exposes four outputs.
  */
 class AudioEngine(context: Context) {
 
     val decks = arrayOf(Deck(0), Deck(1))
 
+    /** The Beat FX section; [fxTarget] selects what it processes. */
+    val beatFx = FxUnit(SAMPLE_RATE)
+
+    @Volatile
+    var fxTarget: Int = FX_MASTER
     @Volatile
     var crossfader: Float = 0.5f
     @Volatile
@@ -31,11 +39,17 @@ class AudioEngine(context: Context) {
     @Volatile
     var masterGain: Float = 0.8f
     @Volatile
-    var headphoneGain: Float = 0.75f
+    var headphoneGain: Float = 0.8f
+
+    /** 0 = cue bus only, 1 = master only. */
     @Volatile
     var headphoneMix: Float = 0.5f
     @Volatile
+    var masterCue: Boolean = false
+    @Volatile
     var masterDeckIndex: Int = 0
+        private set
+
     @Volatile
     var error: String? = null
         private set
@@ -46,144 +60,223 @@ class AudioEngine(context: Context) {
     var meterR: Float = 0f
         private set
     @Volatile
-    var routedDeviceName: String? = null
+    var outputName: String? = null
         private set
 
-    init {
-        start()
-    }
+    /** 2 or 4; four means the headphones have their own output pair. */
+    @Volatile
+    var outputChannels: Int = 2
+        private set
 
-    private val appContext = context.applicationContext
+    private val levels = FloatArray(2)
+    private val audioManager = context.getSystemService(AudioManager::class.java)
     private var track: AudioTrack? = null
     private var worker: Thread? = null
+    private var device: AudioDeviceInfo? = null
+
     @Volatile
     private var running = false
 
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) {
+            // Plugging in a USB interface is a clear request to use it.
+            added.firstOrNull { isUsbSink(it) }?.let { selectOutput(it) }
+        }
+
+        override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) {
+            val current = device ?: return
+            if (removed.any { it.id == current.id }) {
+                // Never fall back to the phone speaker at full volume mid-set.
+                decks.forEach { it.pause() }
+                selectOutput(null)
+            }
+        }
+    }
+
     fun start() {
-        if (running) return
+        // The callback fires once with the devices already present, which
+        // routes to a controller that was plugged in before the app started.
+        selectOutput(null)
+        audioManager.registerAudioDeviceCallback(deviceCallback, null)
+    }
+
+    fun close() {
+        audioManager.unregisterAudioDeviceCallback(deviceCallback)
+        stopOutput()
+        decks.forEach { it.close() }
+    }
+
+    fun outputs(): List<AudioDeviceInfo> = try {
+        audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.isSink }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    /** Peak level of a deck after its fader, for the channel meters. */
+    fun level(deck: Int): Float = levels[deck]
+
+    fun setMasterDeck(index: Int) {
+        masterDeckIndex = index.coerceIn(0, 1)
+        decks[masterDeckIndex].releaseSync()
+    }
+
+    /** Routes the mix to [target], or to the system default output when null. */
+    @Synchronized
+    fun selectOutput(target: AudioDeviceInfo?) {
+        stopOutput()
+        val quad = target != null && hasFourChannels(target)
         try {
-            val minBuffer = AudioTrack.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_OUT_STEREO,
-                AudioFormat.ENCODING_PCM_FLOAT
-            )
-            val bufferBytes = max(16_384, minBuffer * 2)
-            val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
-            val format = AudioFormat.Builder()
-                .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                .setSampleRate(SAMPLE_RATE)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
-                .build()
-            track = AudioTrack.Builder()
-                .setAudioAttributes(attributes)
-                .setAudioFormat(format)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(bufferBytes)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .build()
-            track?.play()
+            val out = try {
+                buildTrack(if (quad) 4 else 2, target)
+            } catch (e: Exception) {
+                if (!quad) throw e
+                Log.w(TAG, "4-channel output refused, using stereo", e)
+                buildTrack(2, target)
+            }
+            device = target
+            track = out
+            outputChannels = out.channelCount
+            outputName = target?.productName?.toString()
+            error = null
+            out.play()
             running = true
-            worker = Thread(::mixLoop, "flx4-mixer").apply { start() }
+            worker = Thread({ mixLoop(out) }, "flx4-mixer").apply { start() }
         } catch (e: Exception) {
-            error = e.message ?: e.javaClass.simpleName
+            error = "Audio output failed: ${e.message ?: e.javaClass.simpleName}"
             Log.e(TAG, "Could not start audio output", e)
         }
     }
 
-    fun setOutputDevice(device: AudioDeviceInfo?): Boolean {
-        return try {
-            val result = track?.setPreferredDevice(device) ?: false
-            routedDeviceName = device?.productName?.toString()
-            result
-        } catch (e: Exception) {
-            Log.w(TAG, "setPreferredDevice failed", e)
-            false
+    private fun buildTrack(channels: Int, target: AudioDeviceInfo?): AudioTrack {
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+            .setSampleRate(SAMPLE_RATE)
+            .apply {
+                // An index mask addresses the interface's outputs 1-4 directly,
+                // without the surround-sound meaning of a position mask.
+                if (channels == 4) setChannelIndexMask(0xF)
+                else setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+            }
+            .build()
+        val stereoBytes = AudioTrack.getMinBufferSize(
+            SAMPLE_RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT
+        )
+        val out = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(format)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(max(stereoBytes, BLOCK * 8) * channels)
+            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+            .build()
+        if (target != null && !out.setPreferredDevice(target)) {
+            out.release()
+            throw IllegalStateException("${target.productName} refused the stream")
         }
+        return out
     }
 
-    fun stop() {
+    private fun stopOutput() {
         running = false
         worker?.let {
             try {
-                it.join(1200)
+                it.join(1000)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
         }
         worker = null
-        try {
-            track?.pause()
-            track?.flush()
-            track?.release()
-        } catch (_: Exception) {
-        }
+        track?.let { runCatching { it.pause(); it.flush(); it.release() } }
         track = null
-        decks.forEach { it.close() }
     }
 
-    fun close() {
-        stop()
-    }
-
-    private fun mixLoop() {
+    private fun mixLoop(out: AudioTrack) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+        val channels = out.channelCount
         val aL = FloatArray(BLOCK)
         val aR = FloatArray(BLOCK)
         val bL = FloatArray(BLOCK)
         val bR = FloatArray(BLOCK)
-        val output = FloatArray(BLOCK * 2)
+        val cueL = FloatArray(BLOCK)
+        val cueR = FloatArray(BLOCK)
+        val output = FloatArray(BLOCK * channels)
         val deckA = decks[0]
         val deckB = decks[1]
-        val out = track ?: return
 
         while (running) {
-            val masterForA = if (deckA.syncEnabled && masterDeckIndex == 1) deckB else null
-            val masterForB = if (deckB.syncEnabled && masterDeckIndex == 0) deckA else null
-            deckA.render(BLOCK, aL, aR, masterForA)
-            deckB.render(BLOCK, bL, bR, masterForB)
+            deckA.render(BLOCK, aL, aR, if (deckA.syncEnabled && masterDeckIndex == 1) deckB else null)
+            deckB.render(BLOCK, bL, bR, if (deckB.syncEnabled && masterDeckIndex == 0) deckA else null)
 
             val cross = crossfader
             val gainA = MixerMath.faderGain(deckA.volume) * MixerMath.crossGain(cross, 0)
             val gainB = MixerMath.faderGain(deckB.volume) * MixerMath.crossGain(cross, 1)
-            val cueA = if (deckA.cueEnabled) 1f else 0f
-            val cueB = if (deckB.cueEnabled) 1f else 0f
-            val mix = headphoneMix.coerceIn(0f, 1f)
-            val master = masterGain.coerceIn(0f, 1f)
-            val headphones = headphoneGain.coerceIn(0f, 1f)
-            val split = splitCue
-            var peakL = 0f
-            var peakR = 0f
-
+            val pflA = if (deckA.cueEnabled) 1f else 0f
+            val pflB = if (deckB.cueEnabled) 1f else 0f
+            var peakA = 0f
+            var peakB = 0f
             for (i in 0 until BLOCK) {
-                val masterL = aL[i] * gainA + bL[i] * gainB
-                val masterR = aR[i] * gainA + bR[i] * gainB
-                val cueL = aL[i] * cueA + bL[i] * cueB
-                val cueR = aR[i] * cueA + bR[i] * cueB
+                // The cue bus is tapped before the faders, like a hardware mixer.
+                cueL[i] = aL[i] * pflA + bL[i] * pflB
+                cueR[i] = aR[i] * pflA + bR[i] * pflB
+                aL[i] *= gainA
+                aR[i] *= gainA
+                bL[i] *= gainB
+                bR[i] *= gainB
+                peakA = max(peakA, abs(aL[i]))
+                peakB = max(peakB, abs(bL[i]))
+            }
+            levels[0] = max(peakA, levels[0] * 0.9f)
+            levels[1] = max(peakB, levels[1] * 0.9f)
 
-                val left: Float
-                val right: Float
-                if (split) {
-                    left = (masterL * master).coerceIn(-1f, 1f)
-                    val cueOutL = cueL * (1f - mix) + masterL * mix
-                    val cueOutR = cueR * (1f - mix) + masterR * mix
-                    right = (((cueOutL + cueOutR) * 0.5f) * headphones).coerceIn(-1f, 1f)
-                    output[i * 2] = left
-                    output[i * 2 + 1] = right
-                } else {
-                    left = (masterL * master).coerceIn(-1f, 1f)
-                    right = (masterR * master).coerceIn(-1f, 1f)
-                    output[i * 2] = left
-                    output[i * 2 + 1] = right
-                }
-                peakL = max(peakL, abs(left))
-                peakR = max(peakR, abs(right))
+            // Beat FX sit after the faders so an echo keeps ringing when a fader closes.
+            val target = fxTarget
+            if (target == FX_DECK_A) beatFx.process(aL, aR, BLOCK, deckA.effectiveBpm(), deckA.beatPosition())
+            if (target == FX_DECK_B) beatFx.process(bL, bR, BLOCK, deckB.effectiveBpm(), deckB.beatPosition())
+            for (i in 0 until BLOCK) {
+                aL[i] += bL[i]
+                aR[i] += bR[i]
+            }
+            if (target == FX_MASTER) {
+                val master = decks[masterDeckIndex]
+                beatFx.process(aL, aR, BLOCK, master.effectiveBpm(), master.beatPosition())
             }
 
-            meterL = meterL * 0.8f + peakL * 0.2f
-            meterR = meterR * 0.8f + peakR * 0.2f
+            val master = masterGain.coerceIn(0f, 1f)
+            val phones = headphoneGain.coerceIn(0f, 1f)
+            val mix = headphoneMix.coerceIn(0f, 1f)
+            val masterToCue = if (masterCue) 1f else 0f
+            val split = splitCue && channels == 2
+            var peakL = 0f
+            var peakR = 0f
+            for (i in 0 until BLOCK) {
+                val left = MixerMath.softClip(aL[i] * master)
+                val right = MixerMath.softClip(aR[i] * master)
+                peakL = max(peakL, abs(left))
+                peakR = max(peakR, abs(right))
+                val o = i * channels
+                if (channels == 2 && !split) {
+                    output[o] = left
+                    output[o + 1] = right
+                    continue
+                }
+                val phonesL = ((cueL[i] + aL[i] * masterToCue) * (1f - mix) + aL[i] * mix) * phones
+                val phonesR = ((cueR[i] + aR[i] * masterToCue) * (1f - mix) + aR[i] * mix) * phones
+                if (split) {
+                    output[o] = (left + right) * 0.5f
+                    output[o + 1] = MixerMath.softClip((phonesL + phonesR) * 0.5f)
+                } else {
+                    output[o] = left
+                    output[o + 1] = right
+                    output[o + 2] = MixerMath.softClip(phonesL)
+                    output[o + 3] = MixerMath.softClip(phonesR)
+                }
+            }
+            meterL = max(peakL, meterL * 0.9f)
+            meterR = max(peakR, meterR * 0.9f)
 
             val written = try {
                 out.write(output, 0, output.size, AudioTrack.WRITE_BLOCKING)
@@ -192,27 +285,26 @@ class AudioEngine(context: Context) {
                 -1
             }
             if (written < 0) {
-                error = "Audio output stopped (${out.state})"
+                if (running) error = "Audio output stopped (error $written)"
                 break
             }
-            routedDeviceName = out.routedDevice?.productName?.toString()
         }
     }
 
-    fun masterDeck(): Deck = decks[masterDeckIndex]
-
-    fun setMasterDeck(index: Int) {
-        masterDeckIndex = index.coerceIn(0, 1)
-        decks[index.coerceIn(0, 1)].releaseSync()
-    }
-
-    fun toggleSplitCue() {
-        splitCue = !splitCue
-    }
-
     companion object {
-        const val SAMPLE_RATE = 44100
+        const val SAMPLE_RATE = Deck.SAMPLE_RATE
+        const val FX_DECK_A = 0
+        const val FX_DECK_B = 1
+        const val FX_MASTER = 2
         private const val BLOCK = 256
         private const val TAG = "Flx4Audio"
+
+        fun isUsbSink(info: AudioDeviceInfo): Boolean = info.isSink &&
+            (info.type == AudioDeviceInfo.TYPE_USB_DEVICE || info.type == AudioDeviceInfo.TYPE_USB_HEADSET)
+
+        fun hasFourChannels(info: AudioDeviceInfo): Boolean =
+            info.channelCounts.any { it >= 4 } ||
+                info.channelIndexMasks.any { Integer.bitCount(it) >= 4 } ||
+                info.channelMasks.any { Integer.bitCount(it) >= 4 }
     }
 }

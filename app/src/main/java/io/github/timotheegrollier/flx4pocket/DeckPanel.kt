@@ -1,293 +1,315 @@
 package io.github.timotheegrollier.flx4pocket
 
+import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.util.AttributeSet
 import android.view.LayoutInflater
-import android.widget.Button
+import android.view.MotionEvent
+import android.view.View
 import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.TextView
 import java.util.Locale
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
-class DeckPanel @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null
-) : LinearLayout(context, attrs) {
+/**
+ * Touch controls of one deck. The panel owns the deck area itself and is also
+ * handed the deck's waveform header and mixer channel strip, so everything
+ * that shows or edits one [Deck] lives in one class.
+ */
+@SuppressLint("ClickableViewAccessibility") // hold-to-act pads and buttons
+class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
+    LinearLayout(context, attrs) {
 
-    interface Callbacks {
+    /** Actions that need more than the deck itself. */
+    interface Host {
         fun onPlay(deck: Int)
-        fun onCue(deck: Int)
         fun onSync(deck: Int)
-        fun onTap(deck: Int)
-        fun onTempo(deck: Int, progress: Int)
-        fun onVolume(deck: Int, progress: Int)
-        fun onTrim(deck: Int, progress: Int)
-        fun onFilter(deck: Int, progress: Int)
-        fun onEq(deck: Int, band: Int, progress: Int)
-        fun onLoopIn(deck: Int)
-        fun onLoopOut(deck: Int)
-        fun onReloop(deck: Int)
-        fun onPad(deck: Int, pad: Int)
         fun onMaster(deck: Int)
+        fun onTap(deck: Int)
+        fun onHotCuesChanged(deck: Int)
     }
 
-    var callbacks: Callbacks? = null
+    private lateinit var deck: Deck
+    private lateinit var host: Host
+    private var accent = 0
+    private val panelAlt = context.getColor(R.color.panel_alt)
+    private val textColor = context.getColor(R.color.text)
+    private val textDim = context.getColor(R.color.text_dim)
+    private val onAccent = context.getColor(R.color.on_accent)
+    private val fxColor = context.getColor(R.color.accent)
+    private val danger = context.getColor(R.color.danger)
 
-    private lateinit var label: TextView
-    private lateinit var bpmLabel: TextView
-    private lateinit var titleLabel: TextView
-    private lateinit var metaLabel: TextView
-    private lateinit var beatBar: BeatBarView
-    private lateinit var timeLabel: TextView
-    private lateinit var modeLabel: TextView
-    private lateinit var pitchLabel: TextView
+    /** Shown instead of the title while a track loads or after a failed load. */
+    var message: String? = null
+    var messageIsError = false
 
-    private lateinit var playButton: Button
-    private lateinit var cueButton: Button
-    private lateinit var syncButton: Button
-    private lateinit var tapButton: Button
-    private lateinit var loopInButton: Button
-    private lateinit var loopOutButton: Button
-    private lateinit var reloopButton: Button
-    private lateinit var masterButton: Button
+    private val overview: OverviewView
+    private val tabs: List<TextView>
+    private val pads: List<TextView>
+    private val loopIn: TextView
+    private val loopOut: TextView
+    private val reloop: TextView
+    private val quantize: TextView
+    private val cue: TextView
+    private val play: TextView
+    private val sync: TextView
+    private val range: TextView
+    private val tempo: FaderView
+    private val pitch: TextView
 
-    private lateinit var tempo: SeekBar
-    private lateinit var volume: SeekBar
-    private lateinit var trim: SeekBar
-    private lateinit var filter: SeekBar
-    private lateinit var eqHigh: SeekBar
-    private lateinit var eqMid: SeekBar
-    private lateinit var eqLow: SeekBar
-    private val pads = ArrayList<Button>(8)
-    private lateinit var seekBars: List<SeekBar>
-
-    private var deckIndex = 0
-    private var accent = Color.CYAN
-    private var loading: String? = null
-    private var error: String? = null
-    private var lastPadMode = -1
-    private var loopPad = -1
+    // Waveform header and channel strip, attached in bind().
+    private lateinit var title: TextView
+    private lateinit var state: TextView
+    private lateinit var bpm: TextView
+    private lateinit var time: TextView
+    private lateinit var trim: KnobView
+    private lateinit var filter: KnobView
+    private lateinit var eqHigh: KnobView
+    private lateinit var eqMid: KnobView
+    private lateinit var eqLow: KnobView
+    private lateinit var volume: FaderView
+    private lateinit var vu: VuView
+    private lateinit var pfl: TextView
 
     init {
-        orientation = VERTICAL
+        orientation = HORIZONTAL
         LayoutInflater.from(context).inflate(R.layout.view_deck, this, true)
-
-        label = findViewById(R.id.deck_label)
-        bpmLabel = findViewById(R.id.deck_bpm)
-        titleLabel = findViewById(R.id.deck_title)
-        metaLabel = findViewById(R.id.deck_meta)
-        beatBar = findViewById(R.id.deck_beat)
-        timeLabel = findViewById(R.id.deck_time)
-        modeLabel = findViewById(R.id.deck_mode)
-        pitchLabel = findViewById(R.id.deck_pitch)
-        playButton = findViewById(R.id.deck_play)
-        cueButton = findViewById(R.id.deck_cue)
-        syncButton = findViewById(R.id.deck_sync)
-        tapButton = findViewById(R.id.deck_tap)
-        loopInButton = findViewById(R.id.deck_loop_in)
-        loopOutButton = findViewById(R.id.deck_loop_out)
-        reloopButton = findViewById(R.id.deck_reloop)
-        masterButton = findViewById(R.id.deck_master)
+        overview = findViewById(R.id.deck_overview)
+        tabs = listOf(R.id.deck_tab_0, R.id.deck_tab_1, R.id.deck_tab_2, R.id.deck_tab_3, R.id.deck_tab_4)
+            .map { findViewById(it) }
+        pads = listOf(
+            R.id.deck_pad_0, R.id.deck_pad_1, R.id.deck_pad_2, R.id.deck_pad_3,
+            R.id.deck_pad_4, R.id.deck_pad_5, R.id.deck_pad_6, R.id.deck_pad_7
+        ).map { findViewById(it) }
+        loopIn = findViewById(R.id.deck_loop_in)
+        loopOut = findViewById(R.id.deck_loop_out)
+        reloop = findViewById(R.id.deck_reloop)
+        quantize = findViewById(R.id.deck_quantize)
+        cue = findViewById(R.id.deck_cue)
+        play = findViewById(R.id.deck_play)
+        sync = findViewById(R.id.deck_sync)
+        range = findViewById(R.id.deck_range)
         tempo = findViewById(R.id.deck_tempo)
-        volume = findViewById(R.id.deck_volume)
-        trim = findViewById(R.id.deck_trim)
-        filter = findViewById(R.id.deck_filter)
-        eqHigh = findViewById(R.id.deck_eq_hi)
-        eqMid = findViewById(R.id.deck_eq_mid)
-        eqLow = findViewById(R.id.deck_eq_low)
-        seekBars = listOf(tempo, volume, trim, filter, eqHigh, eqMid, eqLow)
-
-        pads.clear()
-        pads.add(findViewById(R.id.deck_pad_0))
-        pads.add(findViewById(R.id.deck_pad_1))
-        pads.add(findViewById(R.id.deck_pad_2))
-        pads.add(findViewById(R.id.deck_pad_3))
-        pads.add(findViewById(R.id.deck_pad_4))
-        pads.add(findViewById(R.id.deck_pad_5))
-        pads.add(findViewById(R.id.deck_pad_6))
-        pads.add(findViewById(R.id.deck_pad_7))
-
-        playButton.setOnClickListener { callbacks?.onPlay(deckIndex) }
-        cueButton.setOnClickListener { callbacks?.onCue(deckIndex) }
-        syncButton.setOnClickListener { callbacks?.onSync(deckIndex) }
-        tapButton.setOnClickListener { callbacks?.onTap(deckIndex) }
-        loopInButton.setOnClickListener { callbacks?.onLoopIn(deckIndex) }
-        loopOutButton.setOnClickListener { callbacks?.onLoopOut(deckIndex) }
-        reloopButton.setOnClickListener { callbacks?.onReloop(deckIndex) }
-        masterButton.setOnClickListener { callbacks?.onMaster(deckIndex) }
-        pads.forEachIndexed { index, button ->
-            button.setOnClickListener { callbacks?.onPad(deckIndex, index) }
-        }
-
-        addSeekBar(tempo) { callbacks?.onTempo(deckIndex, it) }
-        addSeekBar(volume) { callbacks?.onVolume(deckIndex, it) }
-        addSeekBar(trim) { callbacks?.onTrim(deckIndex, it) }
-        addSeekBar(filter) { callbacks?.onFilter(deckIndex, it) }
-        addSeekBar(eqHigh) { callbacks?.onEq(deckIndex, 0, it) }
-        addSeekBar(eqMid) { callbacks?.onEq(deckIndex, 1, it) }
-        addSeekBar(eqLow) { callbacks?.onEq(deckIndex, 2, it) }
+        pitch = findViewById(R.id.deck_pitch)
     }
 
-    fun bind(index: Int, accentColor: Int) {
-        deckIndex = index
+    fun bind(deck: Deck, accentColor: Int, header: View, strip: View, host: Host, onZoom: (Double) -> Unit) {
+        this.deck = deck
+        this.host = host
         accent = accentColor
-        label.text = if (index == 0) "DECK A" else "DECK B"
-        label.setTextColor(accentColor)
-        label.contentDescription = label.text
-        seekBars.forEach {
-            it.progressTintList = ColorStateList.valueOf(accentColor)
-            it.thumbTintList = ColorStateList.valueOf(accentColor)
+        val index = deck.index
+
+        header.findViewById<WaveformView>(R.id.wave).let {
+            it.deck = deck
+            it.accent = accentColor
+            it.onZoom = onZoom
         }
-        pads.forEach { it.setTextColor(context.getColor(R.color.text)) }
+        header.findViewById<TextView>(R.id.wave_deck).let {
+            it.text = if (index == 0) "A" else "B"
+            it.tint(accentColor, onAccent)
+        }
+        title = header.findViewById(R.id.wave_title)
+        state = header.findViewById(R.id.wave_state)
+        bpm = header.findViewById(R.id.wave_bpm)
+        time = header.findViewById(R.id.wave_time)
+        bpm.setTextColor(accentColor)
+        overview.deck = deck
+        overview.accent = accentColor
+
+        trim = strip.findViewById(R.id.ch_trim)
+        filter = strip.findViewById(R.id.ch_filter)
+        eqHigh = strip.findViewById(R.id.ch_eq_hi)
+        eqMid = strip.findViewById(R.id.ch_eq_mid)
+        eqLow = strip.findViewById(R.id.ch_eq_low)
+        volume = strip.findViewById(R.id.ch_volume)
+        vu = strip.findViewById(R.id.ch_vu)
+        pfl = strip.findViewById(R.id.ch_cue)
+        listOf(trim, filter, eqHigh, eqMid, eqLow, volume, tempo).forEach { it.accent = accentColor }
+        trim.onChange = { deck.trim = it }
+        filter.onChange = { deck.filter = it }
+        eqHigh.onChange = { deck.eqHigh = it }
+        eqMid.onChange = { deck.eqMid = it }
+        eqLow.onChange = { deck.eqLow = it }
+        volume.defaultValue = 1f
+        volume.onChange = { deck.volume = it }
+        pfl.setOnClickListener { deck.cueEnabled = !deck.cueEnabled }
+
+        // Like the hardware fader: pulling it down speeds the track up.
+        tempo.centered = true
+        tempo.onChange = { deck.setTempoNormalized((0.5 - it) * 2.0) }
+        range.setOnClickListener { deck.cycleTempoRange() }
+
+        TAB_MODES.forEachIndexed { i, mode ->
+            tabs[i].text = TAB_LABELS[i]
+            tabs[i].setOnClickListener { deck.padMode = mode }
+        }
+        pads.forEachIndexed { i, pad -> pad.setOnTouchListener { view, event -> onPadTouch(view, i, event) } }
+
+        loopIn.setOnClickListener { deck.setLoopIn() }
+        loopOut.setOnClickListener { deck.setLoopOut() }
+        reloop.setOnClickListener { deck.toggleLoop() }
+        findViewById<View>(R.id.deck_loop_half).setOnClickListener { deck.scaleLoop(0.5) }
+        findViewById<View>(R.id.deck_loop_double).setOnClickListener { deck.scaleLoop(2.0) }
+        quantize.setOnClickListener { deck.quantize = !deck.quantize }
+        findViewById<View>(R.id.deck_tap).setOnClickListener { host.onTap(index) }
+
+        play.setOnClickListener { host.onPlay(index) }
+        sync.setOnClickListener { host.onSync(index) }
+        sync.setOnLongClickListener {
+            host.onMaster(index)
+            true
+        }
+        cue.setOnTouchListener { view, event ->
+            hold(view, event, down = { deck.cueDown() }, up = { deck.cueUp() })
+        }
+        findViewById<View>(R.id.deck_bend_minus).setOnTouchListener { view, event ->
+            hold(view, event, down = { deck.nudge = -BEND }, up = { deck.nudge = 0.0 })
+        }
+        findViewById<View>(R.id.deck_bend_plus).setOnTouchListener { view, event ->
+            hold(view, event, down = { deck.nudge = BEND }, up = { deck.nudge = 0.0 })
+        }
     }
 
-    fun setLoading(text: String?) {
-        loading = text
-        error = null
+    private fun hold(view: View, event: MotionEvent, down: () -> Unit, up: () -> Unit): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                view.isPressed = true
+                down()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                view.isPressed = false
+                up()
+            }
+        }
+        return true
     }
 
-    fun setError(message: String?) {
-        error = message
-        loading = null
+    private val deleteHotCue = Runnable {
+        deck.padDown(Deck.PAD_HOT_CUE, heldPad, shift = true)
+        host.onHotCuesChanged(deck.index)
+    }
+    private var heldPad = -1
+
+    private fun onPadTouch(view: View, pad: Int, event: MotionEvent): Boolean {
+        val mode = deck.padMode
+        return hold(
+            view, event,
+            down = {
+                val existed = mode == Deck.PAD_HOT_CUE && deck.hotCues[pad] != null
+                deck.padDown(mode, pad)
+                if (mode == Deck.PAD_HOT_CUE) host.onHotCuesChanged(deck.index)
+                if (existed) {
+                    // Keep holding an existing hot cue to delete it.
+                    heldPad = pad
+                    postDelayed(deleteHotCue, 700)
+                }
+            },
+            up = {
+                removeCallbacks(deleteHotCue)
+                deck.padUp(mode, pad)
+            }
+        )
     }
 
-    fun setLoopPad(index: Int) {
-        loopPad = index
+    /** Called on every display frame: control positions and meters. */
+    fun refreshControls(level: Float) {
+        trim.show(deck.trim)
+        filter.show(deck.filter)
+        eqHigh.show(deck.eqHigh)
+        eqMid.show(deck.eqMid)
+        eqLow.show(deck.eqLow)
+        volume.show(deck.volume)
+        tempo.show((0.5 - deck.tempoPosition / 2.0).toFloat())
+        vu.setLevel(level)
     }
 
-    fun render(deck: Deck, masterIndex: Int) {
+    /** Called a few times per second: texts and button states. */
+    fun refresh(isMaster: Boolean) {
         val hasTrack = deck.hasTrack()
-        titleLabel.text = when {
-            error != null -> error
-            loading != null -> loading
-            hasTrack -> deck.title.ifBlank { "Untitled track" }
-            else -> "Load a track"
-        }
-        titleLabel.setTextColor(
+        val text = message
+        title.show(
             when {
-                error != null -> context.getColor(R.color.danger)
-                hasTrack -> context.getColor(R.color.text)
-                else -> context.getColor(R.color.text_dim)
+                text != null -> text
+                !hasTrack -> "Open LIBRARY to load a track"
+                deck.artist.isBlank() -> deck.title
+                else -> "${deck.title}  ·  ${deck.artist}"
             }
         )
-        metaLabel.text = when {
-            error != null -> context.getString(R.string.status_controller, "Load a track first")
-            loading != null -> context.getString(R.string.status_output, "Decoding audio…")
-            hasTrack -> deck.artist.ifBlank { context.getString(R.string.status_output, "Analyzing…") }
-            else -> context.getString(R.string.status_output, "FLX4 LOAD 1 / 2 or open LIBRARY")
-        }
+        title.setTextColor(if (text != null && messageIsError) danger else if (hasTrack) textColor else textDim)
 
-        val bpm = deck.effectiveBpm()
-        bpmLabel.text = if (bpm > 0.0) {
-            val prefix = if (deck.gridConfidence > 0.0 && deck.gridConfidence < 1.3) "~" else ""
-            String.format(Locale.US, "%s%.1f BPM", prefix, bpm)
-        } else {
-            "-- BPM"
-        }
-
-        timeLabel.text = String.format(
-            Locale.US,
-            "%s / %s",
-            formatTime(deck.positionSec),
-            formatTime(deck.durationSec)
+        val analysing = hasTrack && deck.waveform?.complete != true
+        state.show(
+            listOfNotNull(
+                "ANALYSING".takeIf { analysing },
+                "MASTER".takeIf { isMaster && hasTrack },
+                "SMART CFX".takeIf { deck.smartCfx }
+            ).joinToString("   ")
         )
-        pitchLabel.text = String.format(Locale.US, "%+.1f%%", (deck.tempoRate - 1.0) * 100.0)
-
-        beatBar.setState(
-            deck.phase(),
-            deck.grid.beatIndex(deck.positionSec),
-            deck.playing,
-            accent
-        )
-
-        playButton.text = if (deck.playing) "PAUSE" else "PLAY"
-        styleButton(playButton, deck.playing, true)
-        styleButton(cueButton, !deck.playing && hasTrack, false)
-        styleButton(syncButton, deck.syncEnabled, deck.syncEnabled)
-        styleButton(masterButton, masterIndex == deckIndex, true)
-        styleButton(loopInButton, deck.loopInSec >= 0.0, deck.loopInSec >= 0.0)
-        styleButton(loopOutButton, deck.loopOutSec > deck.loopInSec, deck.loopOutSec > deck.loopInSec)
-        styleButton(reloopButton, deck.loopActive, deck.loopActive)
-
-        if (lastPadMode != deck.padMode) {
-            lastPadMode = deck.padMode
-            updatePadLabels(deck.padMode)
-        }
-        modeLabel.text = when (deck.padMode) {
-            Deck.PAD_BEAT_LOOP -> "BEAT LOOP"
-            Deck.PAD_BEAT_JUMP -> "BEAT JUMP"
-            else -> "HOT CUE"
-        }
-
-        pads.forEachIndexed { index, pad ->
-            val active = when (deck.padMode) {
-                Deck.PAD_HOT_CUE -> deck.hotCues.getOrNull(index) != null
-                Deck.PAD_BEAT_LOOP -> loopPad == index
-                else -> false
+        val tempoBpm = deck.effectiveBpm()
+        bpm.show(
+            when {
+                tempoBpm <= 0.0 -> "--.-"
+                deck.gridConfidence < 1.3 -> String.format(Locale.US, "~%.1f", tempoBpm)
+                else -> String.format(Locale.US, "%.1f", tempoBpm)
             }
-            stylePad(pad, active)
-        }
-
-        if (!tempo.isPressed) {
-            val normalized = if (abs(deck.tempoRange) < 1e-6) 0.0
-            else (deck.tempoRate - 1.0) / deck.tempoRange
-            tempo.progress = ((normalized * 0.5 + 0.5) * 1000.0).roundToInt().coerceIn(0, 1000)
-        }
-        if (!volume.isPressed) volume.progress = (deck.volume * 1000f).roundToInt()
-        if (!trim.isPressed) trim.progress = (deck.trim * 1000f).roundToInt()
-        if (!filter.isPressed) filter.progress = (deck.filter * 1000f).roundToInt()
-        if (!eqHigh.isPressed) eqHigh.progress = (deck.eqHigh * 1000f).roundToInt()
-        if (!eqMid.isPressed) eqMid.progress = (deck.eqMid * 1000f).roundToInt()
-        if (!eqLow.isPressed) eqLow.progress = (deck.eqLow * 1000f).roundToInt()
-    }
-
-    fun publishSpectrum(spectrum: FloatArray?) {
-        beatBar.publishSpectrum(spectrum)
-    }
-
-    private fun updatePadLabels(mode: Int) {
-        val labels = when (mode) {
-            Deck.PAD_BEAT_LOOP -> listOf("1/4", "1/2", "1", "2", "4", "8", "16", "32")
-            Deck.PAD_BEAT_JUMP -> listOf("-1", "+1", "-2", "+2", "-4", "+4", "-8", "+8")
-            else -> listOf("1", "2", "3", "4", "5", "6", "7", "8")
-        }
-        pads.forEachIndexed { index, button -> button.text = labels[index] }
-    }
-
-    private fun styleButton(button: Button, active: Boolean, emphasize: Boolean) {
-        button.backgroundTintList = ColorStateList.valueOf(
-            if (active) accent else context.getColor(R.color.panel_alt)
         )
-        button.setTextColor(if (active || emphasize) context.getColor(R.color.text) else context.getColor(R.color.text_dim))
-    }
+        time.show(if (hasTrack) "-" + formatTime(deck.durationSec - deck.positionSec) else "--:--")
+        pitch.show(String.format(Locale.US, "%+.1f%%", (deck.tempoRate * deck.syncFactor - 1.0) * 100.0))
+        range.show(if (deck.tempoRange >= 0.5) "WIDE" else "±${(deck.tempoRange * 100).toInt()}%")
 
-    private fun stylePad(pad: Button, active: Boolean) {
-        pad.backgroundTintList = ColorStateList.valueOf(
-            if (active) accent else context.getColor(R.color.panel_alt)
-        )
-        pad.setTextColor(if (active) context.getColor(R.color.text) else context.getColor(R.color.text_dim))
-    }
+        play.show(if (deck.playing) "❚❚" else "▶")
+        style(play, deck.playing)
+        style(cue, hasTrack && !deck.playing)
+        style(sync, deck.syncEnabled)
+        style(pfl, deck.cueEnabled)
+        style(loopIn, deck.loopInSec >= 0.0)
+        style(loopOut, deck.loopActive)
+        style(reloop, deck.loopActive)
+        style(quantize, deck.quantize)
 
-    private fun addSeekBar(bar: SeekBar, onChange: (Int) -> Unit) {
-        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) onChange(progress)
+        val mode = deck.padMode
+        TAB_MODES.forEachIndexed { i, tabMode -> style(tabs[i], tabMode == mode) }
+        val loopBeats = deck.loopBeats()
+        val cues = deck.hotCues
+        pads.forEachIndexed { i, pad ->
+            when (mode) {
+                Deck.PAD_HOT_CUE -> {
+                    val at = cues[i]
+                    val letter = WaveformView.HOT_CUE_LETTERS[i]
+                    pad.show(if (at == null) "$letter" else "$letter\n${formatTime(at)}")
+                    if (at == null) pad.tint(panelAlt, textDim) else pad.tint(WaveColors.HOT_CUES[i], onAccent)
+                }
+                Deck.PAD_BEAT_LOOP -> {
+                    pad.show(LOOP_LABELS[i])
+                    style(pad, loopBeats == Deck.LOOP_BEATS[i])
+                }
+                Deck.PAD_BEAT_JUMP -> {
+                    pad.show(JUMP_LABELS[i])
+                    style(pad, false)
+                }
+                else -> {
+                    val slots = if (mode == Deck.PAD_FX1) Deck.PAD_FX1_SLOTS else Deck.PAD_FX2_SLOTS
+                    pad.show(slots[i].label.replace(' ', '\n'))
+                    if (deck.heldFxPad == i) pad.tint(fxColor, onAccent) else pad.tint(panelAlt, textColor)
+                }
             }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
+        }
     }
+
+    private fun style(button: TextView, active: Boolean) =
+        if (active) button.tint(accent, onAccent) else button.tint(panelAlt, textColor)
 
     private fun formatTime(seconds: Double): String {
-        if (!seconds.isFinite() || seconds < 0.0) return "00:00"
-        val total = seconds.toInt()
-        val minutes = total / 60
-        val secs = total % 60
-        return String.format(Locale.US, "%02d:%02d", minutes, secs)
+        val total = if (seconds.isFinite() && seconds > 0.0) seconds.toInt() else 0
+        return String.format(Locale.US, "%d:%02d", total / 60, total % 60)
+    }
+
+    private companion object {
+        const val BEND = 0.04
+        val TAB_MODES = intArrayOf(
+            Deck.PAD_HOT_CUE, Deck.PAD_BEAT_LOOP, Deck.PAD_BEAT_JUMP, Deck.PAD_FX1, Deck.PAD_FX2
+        )
+        val TAB_LABELS = arrayOf("HOT CUE", "BEAT LOOP", "BEAT JUMP", "PAD FX 1", "PAD FX 2")
+        val LOOP_LABELS = arrayOf("1/4", "1/2", "1", "2", "4", "8", "16", "32")
+        val JUMP_LABELS = arrayOf("◄ 1", "1 ►", "◄ 2", "2 ►", "◄ 4", "4 ►", "◄ 8", "8 ►")
     }
 }

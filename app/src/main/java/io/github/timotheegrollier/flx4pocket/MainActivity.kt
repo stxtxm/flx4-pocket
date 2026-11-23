@@ -4,8 +4,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
@@ -15,94 +13,79 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.Choreographer
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
-import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import android.widget.ToggleButton
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicIntegerArray
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
-class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
+/**
+ * The single screen of the app and its wiring layer: touch controls and FLX4
+ * MIDI events both end up as calls on [AudioEngine] and its [Deck]s, and a
+ * per-frame refresh mirrors their state back to the screen and the LEDs.
+ */
+class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.FrameCallback {
 
-    private lateinit var engine: AudioEngine
+    internal lateinit var engine: AudioEngine // internal: the UI test loads decks directly
     private lateinit var midi: Flx4Midi
     private lateinit var library: Library
     private lateinit var cache: AnalysisCache
     private lateinit var work: ExecutorService
-    private lateinit var libraryAdapter: TrackAdapter
+    private lateinit var updates: UpdateUi
     private val ui = Handler(Looper.getMainLooper())
-    private val deckPanels = ArrayList<DeckPanel>(2)
 
+    private lateinit var panels: List<DeckPanel>
+    private lateinit var waves: List<WaveformView>
     private lateinit var statusLabel: TextView
-    private lateinit var updateButton: Button
-    private lateinit var libraryPanel: LinearLayout
+    private lateinit var masterVu: VuView
+    private lateinit var crossfader: FaderView
+    private lateinit var smartCfx: TextView
+    private lateinit var masterCue: TextView
+    private lateinit var fxSelect: TextView
+    private lateinit var fxBeats: TextView
+    private lateinit var fxTarget: TextView
+    private lateinit var fxDepth: FaderView
+    private lateinit var fxOn: TextView
+    private lateinit var libraryPanel: View
     private lateinit var libraryList: ListView
-    private lateinit var libraryPathLabel: TextView
-    private lateinit var libraryTargetButton: Button
-    private lateinit var vu: VuView
-    private lateinit var mixerCross: SeekBar
-    private lateinit var mixerHeadphone: SeekBar
-    private lateinit var mixerMaster: SeekBar
-    private lateinit var mixerSplit: ToggleButton
-    private lateinit var cueAButton: Button
-    private lateinit var cueBButton: Button
-    private lateinit var masterLabel: TextView
-    private lateinit var versionLabel: TextView
+    private lateinit var libraryInfo: TextView
+    private lateinit var librarySearch: EditText
+
     private val tracks = ArrayList<Track>()
-
-    private val versionName: String
-        get() {
-            return try {
-                val info = packageManager.getPackageInfo(packageName, 0)
-                val vc = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
-                    @Suppress("DEPRECATION")
-                    info.versionCode.toLong()
-                }
-                val vn = if (Build.VERSION.SDK_INT >= 28) info.versionName else {
-                    @Suppress("DEPRECATION")
-                    info.versionName
-                }
-                String.format(Locale.US, "%s (build %d)", vn, vc)
-            } catch (_: Exception) {
-                "unknown (build error)"
-            }
-        }
-
+    private var visibleTracks: List<Track> = emptyList()
     private var selectedTrack = -1
-    private var libraryTarget = 0
-    private var folderUri: Uri? = null
-    private val loadTokens = AtomicIntegerArray(2)
-    private val loopPads = intArrayOf(-1, -1)
-    private val taps = Array(2) { ArrayList<Long>() }
-    private var midiName: String? = null
-    private var updateInfo: UpdateChecker.UpdateInfo? = null
-    private var updateCheckRunning = false
-    private var lastUpdateCheckMillis = 0L
-    @Volatile
-    private var downloadCancelled = false
-    private var activeUpdateDialog: AlertDialog? = null
-    private var pendingUpdateInfo: UpdateChecker.UpdateInfo? = null
+    private val trackAdapter = TrackAdapter()
 
-    private val preferences by lazy {
-        getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    }
+    private val loadTokens = AtomicIntegerArray(2)
+    private val loadedTracks = arrayOfNulls<Track>(2)
+    private val taps = Array(2) { ArrayList<Long>() }
+    private val loopInDownAt = LongArray(2)
+    private val fxChannels = booleanArrayOf(true, true)
+    private var fxBeatIndex = 2 // 1/2 beat
+    private var midiName: String? = null
+    private var frame = 0
+    private var lastBackPress = 0L
+
+    private val preferences by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        if (change == AudioManager.AUDIOFOCUS_LOSS ||
-            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-        ) {
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
             engine.decks.forEach { it.pause() }
         }
     }
@@ -113,549 +96,444 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         volumeControlStream = AudioManager.STREAM_MUSIC
 
         engine = AudioEngine(this)
+        engine.splitCue = preferences.getBoolean(PREF_SPLIT, false)
+        library = Library(this)
+        cache = AnalysisCache(this)
+        work = Executors.newFixedThreadPool(4)
 
         setContentView(R.layout.activity_main)
         statusLabel = findViewById(R.id.status)
-        versionLabel = findViewById(R.id.version_label)
-        updateButton = findViewById(R.id.btn_update)
-        vu = findViewById(R.id.mixer_vu)
-        mixerCross = findViewById(R.id.mixer_crossfader)
-        mixerHeadphone = findViewById(R.id.mixer_headphone)
-        mixerMaster = findViewById(R.id.mixer_master)
-        mixerSplit = findViewById(R.id.mixer_split)
-        cueAButton = findViewById(R.id.mixer_cue_a)
-        cueBButton = findViewById(R.id.mixer_cue_b)
-        masterLabel = findViewById(R.id.mixer_master_label)
-
-        deckPanels.add(findViewById(R.id.deck_a))
-        deckPanels.add(findViewById(R.id.deck_b))
-        deckPanels[0].bind(0, getColor(R.color.accent_a))
-        deckPanels[1].bind(1, getColor(R.color.accent_b))
-        deckPanels.forEach { it.callbacks = this }
-
+        masterVu = findViewById(R.id.master_vu)
+        setupDecks()
         setupMixer()
         setupLibrary()
-        setupUpdateButton()
-        findViewById<Button>(R.id.btn_library).setOnClickListener {
-            showLibrary(libraryPanel.visibility != View.VISIBLE)
-        }
-        findViewById<Button>(R.id.btn_audio).setOnClickListener { showAudioOutputs() }
+        findViewById<View>(R.id.btn_library).setOnClickListener { showLibrary(!libraryVisible) }
+        findViewById<View>(R.id.btn_audio).setOnClickListener { showAudioSettings() }
+        updates = UpdateUi(this, findViewById(R.id.btn_update), work) { engine.decks.any { it.playing } }
+        updates.start()
 
-        library = Library(this)
-        cache = AnalysisCache(this)
-        work = Executors.newFixedThreadPool(3)
-        libraryAdapter = TrackAdapter()
-        libraryList.adapter = libraryAdapter
-
-        engine.splitCue = preferences.getBoolean(PREF_SPLIT, false)
-        mixerSplit.isChecked = engine.splitCue
-        lastUpdateCheckMillis = preferences.getLong(PREF_LAST_UPDATE_CHECK, 0L)
+        engine.start()
+        midi = Flx4Midi(this, this)
+        midi.start()
+        getSystemService(AudioManager::class.java).requestAudioFocus(
+            focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN
+        )
 
         val savedFolder = preferences.getString(PREF_FOLDER, null)
         if (savedFolder != null) {
-            folderUri = Uri.parse(savedFolder)
-            scanFolder(folderUri!!)
+            scanFolder(Uri.parse(savedFolder))
         } else {
-            libraryPathLabel.text = "Choose a music folder"
+            libraryInfo.text = "Choose your music folder"
             showLibrary(true)
         }
-
-        midi = Flx4Midi(this)
-        midi.setListener(this)
-        midi.start()
-
-        requestAudioFocus()
-        versionLabel.text = getString(R.string.version_format, versionName)
-        ui.post(refreshRunnable)
-        ui.postDelayed({ checkForUpdates(false) }, 4000)
-        startAutoUpdateCheck()
     }
 
     override fun onResume() {
         super.onResume()
-        refreshUpdateStateIfNeeded()
-        if (Build.VERSION.SDK_INT >= 26) {
-            val pending = pendingUpdateInfo
-            if (pending != null && packageManager.canRequestPackageInstalls()) {
-                pendingUpdateInfo = null
-                beginUpdate(pending)
-            }
-        }
+        updates.onResume()
+        Choreographer.getInstance().postFrameCallback(this)
     }
 
-    private fun refreshUpdateStateIfNeeded() {
-        val info = updateInfo
-        if (info != null) {
-            updateButton.apply {
-                text = getString(R.string.btn_update_available, info.versionName)
-                backgroundTintList = ColorStateList.valueOf(getColor(R.color.accent))
-                setTextColor(getColor(R.color.text))
-            }
-        } else {
-            resetUpdateButton()
-        }
-        versionLabel.text = getString(R.string.version_format, versionName)
+    override fun onPause() {
+        Choreographer.getInstance().removeFrameCallback(this)
+        super.onPause()
     }
-
 
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
-        autoCheckRunnable?.let { ui.removeCallbacks(it) }
-        autoCheckRunnable = null
-        activeUpdateDialog?.dismiss()
-        activeUpdateDialog = null
-        if (::midi.isInitialized) midi.close()
-        if (::engine.isInitialized) engine.close()
-        if (::work.isInitialized) work.shutdownNow()
-        abandonAudioFocus()
+        updates.stop()
+        midi.close()
+        engine.close()
+        work.shutdownNow()
+        getSystemService(AudioManager::class.java).abandonAudioFocus(focusListener)
         super.onDestroy()
     }
 
-    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override fun onBackPressed() {
-        if (::libraryPanel.isInitialized && libraryPanel.visibility == View.VISIBLE) {
-            showLibrary(false)
+    /** Full-screen: every dp of a phone in landscape goes to the decks. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) return
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.let {
+                it.hide(WindowInsets.Type.systemBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
         } else {
             @Suppress("DEPRECATION")
-            super.onBackPressed()
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+        }
+    }
+
+    @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
+    override fun onBackPressed() {
+        val now = SystemClock.uptimeMillis()
+        when {
+            libraryVisible -> showLibrary(false)
+            // A stray back gesture must not end a set.
+            engine.decks.any { it.playing } && now - lastBackPress > 2500 -> {
+                lastBackPress = now
+                toast(getString(R.string.back_again))
+            }
+            else -> super.onBackPressed()
         }
     }
 
     // ---------------------------------------------------------------------
-    // UI setup
+    // Setup
     // ---------------------------------------------------------------------
 
+    private fun setupDecks() {
+        val headers = listOf<View>(findViewById(R.id.wave_a), findViewById(R.id.wave_b))
+        val strips = listOf<View>(findViewById(R.id.channel_a), findViewById(R.id.channel_b))
+        val accents = listOf(getColor(R.color.accent_a), getColor(R.color.accent_b))
+        panels = listOf(findViewById(R.id.deck_a), findViewById(R.id.deck_b))
+        waves = headers.map { it.findViewById(R.id.wave) }
+        val zoom = preferences.getFloat(PREF_ZOOM, 8f).toDouble()
+        panels.forEachIndexed { i, panel ->
+            panel.bind(engine.decks[i], accents[i], headers[i], strips[i], this) { seconds ->
+                // Both waveforms share one zoom so their beats stay comparable.
+                waves.forEach { it.visibleSeconds = seconds }
+                preferences.edit().putFloat(PREF_ZOOM, seconds.toFloat()).apply()
+            }
+            waves[i].visibleSeconds = zoom
+        }
+    }
+
     private fun setupMixer() {
-        addUnitSlider(mixerCross) { engine.crossfader = it }
-        addUnitSlider(mixerHeadphone) { engine.headphoneMix = it }
-        addUnitSlider(mixerMaster) { engine.masterGain = it * it }
-        mixerSplit.setOnCheckedChangeListener { _, checked ->
-            engine.splitCue = checked
-            preferences.edit().putBoolean(PREF_SPLIT, checked).apply()
-        }
-        cueAButton.setOnClickListener {
-            engine.decks[0].cueEnabled = !engine.decks[0].cueEnabled
-        }
-        cueBButton.setOnClickListener {
-            engine.decks[1].cueEnabled = !engine.decks[1].cueEnabled
-        }
+        val fxColor = getColor(R.color.accent)
+        crossfader = findViewById(R.id.mixer_crossfader)
+        crossfader.centered = true
+        crossfader.accent = getColor(R.color.text)
+        crossfader.onChange = { engine.crossfader = it }
+
+        smartCfx = findViewById(R.id.mixer_smart_cfx)
+        smartCfx.setOnClickListener { toggleSmartCfx() }
+        masterCue = findViewById(R.id.mixer_master_cue)
+        masterCue.setOnClickListener { engine.masterCue = !engine.masterCue }
+
+        fxSelect = findViewById(R.id.fx_select)
+        fxSelect.setOnClickListener { stepFxType(1) }
+        fxBeats = findViewById(R.id.fx_beats)
+        findViewById<View>(R.id.fx_beat_down).setOnClickListener { stepFxBeats(-1) }
+        findViewById<View>(R.id.fx_beat_up).setOnClickListener { stepFxBeats(1) }
+        fxTarget = findViewById(R.id.fx_target)
+        fxTarget.setOnClickListener { engine.fxTarget = (engine.fxTarget + 1) % 3 }
+        fxDepth = findViewById(R.id.fx_depth)
+        fxDepth.accent = fxColor
+        fxDepth.onChange = { engine.beatFx.depth = it }
+        fxOn = findViewById(R.id.fx_on)
+        fxOn.setOnClickListener { engine.beatFx.enabled = !engine.beatFx.enabled }
+        engine.beatFx.beats = FX_BEATS[fxBeatIndex]
     }
 
     private fun setupLibrary() {
         libraryPanel = findViewById(R.id.library_panel)
         libraryList = findViewById(R.id.library_list)
-        libraryPathLabel = findViewById(R.id.library_path)
-        libraryTargetButton = findViewById(R.id.library_target)
-
-        libraryTargetButton.setOnClickListener {
-            libraryTarget = 1 - libraryTarget
-            libraryTargetButton.text = if (libraryTarget == 0) "TARGET A" else "TARGET B"
-        }
-        findViewById<Button>(R.id.library_folder).setOnClickListener { chooseFolder() }
-        findViewById<Button>(R.id.library_close).setOnClickListener { showLibrary(false) }
-        findViewById<Button>(R.id.library_load_a).setOnClickListener { loadSelected(0) }
-        findViewById<Button>(R.id.library_load_b).setOnClickListener { loadSelected(1) }
+        libraryInfo = findViewById(R.id.library_info)
+        librarySearch = findViewById(R.id.library_search)
+        libraryList.adapter = trackAdapter
         libraryList.setOnItemClickListener { _, _, position, _ ->
             selectedTrack = position
-            libraryAdapter.notifyDataSetChanged()
-            tracks.getOrNull(position)?.let { loadTrack(libraryTarget, it) }
+            trackAdapter.notifyDataSetChanged()
         }
-    }
-
-    private fun setupUpdateButton() {
-        updateButton.setOnClickListener {
-            val info = updateInfo
-            if (info != null) {
-                showUpdateDialog(info)
-            } else {
-                checkForUpdates(true)
-            }
-        }
-    }
-
-    private fun requestAudioFocus() {
-        @Suppress("DEPRECATION")
-        val manager = getSystemService(AudioManager::class.java)
-        manager.requestAudioFocus(
-            focusListener,
-            AudioManager.STREAM_MUSIC,
-            AudioManager.AUDIOFOCUS_GAIN
-        )
-    }
-
-    private fun abandonAudioFocus() {
-        @Suppress("DEPRECATION")
-        val manager = getSystemService(AudioManager::class.java)
-        manager.abandonAudioFocus(focusListener)
+        librarySearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) = filterTracks()
+        })
+        findViewById<View>(R.id.library_folder).setOnClickListener { chooseFolder() }
+        findViewById<View>(R.id.library_close).setOnClickListener { showLibrary(false) }
     }
 
     // ---------------------------------------------------------------------
-    // Periodic UI refresh and MIDI LEDs
+    // Refresh: screen and controller LEDs
     // ---------------------------------------------------------------------
 
-    private val refreshRunnable = object : Runnable {
-        override fun run() {
-            deckPanels[0].render(engine.decks[0], engine.masterDeckIndex)
-            deckPanels[1].render(engine.decks[1], engine.masterDeckIndex)
-            deckPanels[0].publishSpectrum(engine.decks[0].spectrum)
-            deckPanels[1].publishSpectrum(engine.decks[1].spectrum)
-            vu.setLevels(engine.meterL, engine.meterR)
-            if (!mixerCross.isPressed) {
-                mixerCross.progress = (engine.crossfader * 1000f).roundToInt()
-            }
-            if (!mixerHeadphone.isPressed) {
-                mixerHeadphone.progress = (engine.headphoneMix * 1000f).roundToInt()
-            }
-            if (!mixerMaster.isPressed) {
-                mixerMaster.progress = (kotlin.math.sqrt(engine.masterGain) * 1000f)
-                    .roundToInt()
-            }
-            if (mixerSplit.isChecked != engine.splitCue) mixerSplit.isChecked = engine.splitCue
-            masterLabel.text = "MASTER: ${if (engine.masterDeckIndex == 0) "A" else "B"}"
-            styleToggle(cueAButton, engine.decks[0].cueEnabled, getColor(R.color.accent_a))
-            styleToggle(cueBButton, engine.decks[1].cueEnabled, getColor(R.color.accent_b))
+    override fun doFrame(frameTimeNanos: Long) {
+        Choreographer.getInstance().postFrameCallback(this)
+        // Control positions and meters follow the engine every frame; texts,
+        // button states and LEDs are refreshed a few times per second.
+        panels.forEachIndexed { i, panel -> panel.refreshControls(engine.level(i)) }
+        crossfader.show(engine.crossfader)
+        fxDepth.show(engine.beatFx.depth)
+        masterVu.setLevel(maxOf(engine.meterL, engine.meterR))
+        if (frame++ % 6 != 0) return
 
-            for (deck in 0..1) {
-                val d = engine.decks[deck]
-                midi.setDeckPlay(deck, d.playing)
-                midi.setDeckCue(deck, !d.playing && d.hasTrack())
-                midi.setDeckSync(deck, d.syncEnabled)
-                midi.setDeckCueChannel(deck, d.cueEnabled)
-                for (pad in 0 until 8) {
-                    midi.setPad(deck, pad, d.padMode == Deck.PAD_HOT_CUE && d.hotCues[pad] != null)
-                    midi.setPad(
-                        deck,
-                        0x60 + pad,
-                        d.padMode == Deck.PAD_BEAT_LOOP && loopPads[deck] == pad
-                    )
-                }
-            }
-            updateStatusLine()
-            ui.postDelayed(this, 120)
-        }
+        panels.forEachIndexed { i, panel -> panel.refresh(engine.masterDeckIndex == i) }
+        val fx = engine.beatFx
+        val fxColor = getColor(R.color.accent)
+        val dark = getColor(R.color.on_accent)
+        val idle = getColor(R.color.panel_alt)
+        val text = getColor(R.color.text)
+        fxSelect.show(fx.type.label)
+        fxBeats.show(FX_BEAT_LABELS[fxBeatIndex])
+        fxTarget.show(FX_TARGET_LABELS[engine.fxTarget])
+        if (fx.enabled) fxOn.tint(fxColor, dark) else fxOn.tint(idle, text)
+        if (engine.decks[0].smartCfx) smartCfx.tint(fxColor, dark) else smartCfx.tint(idle, text)
+        if (engine.masterCue) masterCue.tint(fxColor, dark) else masterCue.tint(idle, text)
+        updateStatus()
+        if (midi.connected) updateLeds()
     }
 
-    private fun updateStatusLine() {
-        engine.error?.let {
-            statusLabel.text = it
+    private fun updateStatus() {
+        val problem = engine.error
+        if (problem != null) {
+            statusLabel.show(problem)
             statusLabel.setTextColor(getColor(R.color.danger))
             return
         }
-        val controller = midiName ?: getString(R.string.status_no_controller)
-        val output = engine.routedDeviceName ?: "phone output"
-        statusLabel.text = String.format(
-            Locale.US,
-            "%s  •  %s  •  split cue %s",
-            controller,
-            output,
-            if (engine.splitCue) "on" else "off"
-        )
-        statusLabel.setTextColor(getColor(R.color.text_dim))
+        val output = engine.outputName ?: getString(R.string.status_phone_output)
+        val layout = when {
+            engine.outputChannels >= 4 -> "master 1-2 + phones 3-4"
+            engine.splitCue -> "split cue"
+            else -> "stereo"
+        }
+        statusLabel.show("${midiName ?: getString(R.string.status_no_controller)}  ·  $output ($layout)")
+        statusLabel.setTextColor(getColor(if (midiName != null) R.color.ok else R.color.text_dim))
     }
 
-    private fun styleToggle(button: Button, active: Boolean, activeColor: Int) {
-        button.backgroundTintList = ColorStateList.valueOf(
-            if (active) activeColor else getColor(R.color.panel_alt)
-        )
-        button.setTextColor(if (active) Color.BLACK else getColor(R.color.text))
-    }
-
-    private fun addUnitSlider(bar: SeekBar, setter: (Float) -> Unit) {
-        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) setter(progress / 1000f)
+    private fun updateLeds() {
+        for (index in 0..1) {
+            val d = engine.decks[index]
+            val mode = d.padMode
+            midi.setLed(index, MidiMap.NOTE_PLAY, d.playing)
+            midi.setLed(index, MidiMap.NOTE_CUE, d.hasTrack() && !d.playing)
+            midi.setLed(index, MidiMap.NOTE_SYNC, d.syncEnabled)
+            midi.setLed(index, MidiMap.NOTE_CUE_CHANNEL, d.cueEnabled)
+            midi.setLed(index, MidiMap.NOTE_LOOP_IN, d.loopInSec >= 0.0)
+            midi.setLed(index, MidiMap.NOTE_LOOP_OUT, d.loopActive)
+            midi.setLed(index, MidiMap.NOTE_HOT_CUE_MODE, mode == Deck.PAD_HOT_CUE)
+            midi.setLed(index, MidiMap.NOTE_PAD_FX1_MODE, mode == Deck.PAD_FX1)
+            midi.setLed(index, MidiMap.NOTE_BEAT_JUMP_MODE, mode == Deck.PAD_BEAT_JUMP)
+            midi.setLed(index, MidiMap.NOTE_PAD_FX2_MODE, mode == Deck.PAD_FX2)
+            midi.setLed(index, MidiMap.NOTE_BEAT_LOOP_MODE, mode == Deck.PAD_BEAT_LOOP)
+            val loopBeats = d.loopBeats()
+            for (pad in 0..7) {
+                midi.setPad(index, MidiMap.PAD_BASE_HOT_CUE + pad, mode == Deck.PAD_HOT_CUE && d.hotCues[pad] != null)
+                midi.setPad(index, MidiMap.PAD_BASE_BEAT_LOOP + pad, mode == Deck.PAD_BEAT_LOOP && loopBeats == Deck.LOOP_BEATS[pad])
+                midi.setPad(index, MidiMap.PAD_BASE_BEAT_JUMP + pad, mode == Deck.PAD_BEAT_JUMP)
+                midi.setPad(index, MidiMap.PAD_BASE_FX1 + pad, mode == Deck.PAD_FX1 && d.heldFxPad == pad)
+                midi.setPad(index, MidiMap.PAD_BASE_FX2 + pad, mode == Deck.PAD_FX2 && d.heldFxPad == pad)
             }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
+            midi.setLevel(index, engine.level(index))
+        }
+        // The FX ON/OFF LED blinks on 0x7F and stays lit on 0x00.
+        midi.setLed(MidiMap.CH_FX, MidiMap.NOTE_FX_ON, engine.beatFx.enabled)
+        midi.setLed(MidiMap.CH_MIXER, MidiMap.NOTE_SMART_CFX, engine.decks[0].smartCfx)
+        midi.setLed(MidiMap.CH_MIXER, MidiMap.NOTE_MASTER_CUE, engine.masterCue)
     }
 
     // ---------------------------------------------------------------------
-    // DeckPanel callbacks (touch UI)
+    // Actions shared by the touch UI and the controller
     // ---------------------------------------------------------------------
 
     override fun onPlay(deck: Int) {
-        if (engine.decks[deck].hasTrack()) {
-            engine.decks[deck].togglePlay()
-        } else {
-            toast(getString(R.string.play_no_track))
-        }
-    }
-    override fun onCue(deck: Int) = engine.decks[deck].cue()
-    override fun onSync(deck: Int) = toggleSync(deck)
-    override fun onTap(deck: Int) = tapTempo(deck)
-
-    override fun onTempo(deck: Int, progress: Int) {
-        engine.decks[deck].setTempoNormalized((progress - 500) / 500.0)
+        if (engine.decks[deck].hasTrack()) engine.decks[deck].togglePlay()
+        else toast(getString(R.string.play_no_track))
     }
 
-    override fun onVolume(deck: Int, progress: Int) {
-        engine.decks[deck].volume = (progress / 1000f).coerceIn(0f, 1f)
-    }
-
-    override fun onTrim(deck: Int, progress: Int) {
-        engine.decks[deck].trim = (progress / 1000f).coerceIn(0f, 1f)
-    }
-
-    override fun onFilter(deck: Int, progress: Int) {
-        engine.decks[deck].filter = (progress / 1000f).coerceIn(0f, 1f)
-    }
-
-    override fun onEq(deck: Int, band: Int, progress: Int) {
-        val value = (progress / 1000f).coerceIn(0f, 1f)
-        when (band) {
-            0 -> engine.decks[deck].eqHigh = value
-            1 -> engine.decks[deck].eqMid = value
-            2 -> engine.decks[deck].eqLow = value
-        }
-    }
-
-    override fun onLoopIn(deck: Int) {
-        engine.decks[deck].setLoopIn()
-        clearLoopPad(deck)
-    }
-
-    override fun onLoopOut(deck: Int) {
-        engine.decks[deck].setLoopOut()
-        clearLoopPad(deck)
-    }
-
-    override fun onReloop(deck: Int) {
-        engine.decks[deck].toggleLoop()
-        if (!engine.decks[deck].loopActive) clearLoopPad(deck)
-    }
-
-    override fun onPad(deck: Int, pad: Int) {
+    override fun onSync(deck: Int) {
         val d = engine.decks[deck]
-        when (d.padMode) {
-            Deck.PAD_HOT_CUE -> d.triggerHotCue(pad)
-            Deck.PAD_BEAT_LOOP -> applyBeatLoop(deck, pad)
-            Deck.PAD_BEAT_JUMP -> if (pad in JUMP_OFFSETS.indices) {
-                d.beatJump(JUMP_OFFSETS[pad])
+        val other = engine.decks[1 - deck]
+        when {
+            d.syncEnabled -> d.releaseSync()
+            !d.grid.valid -> toast("This deck has no BPM yet — wait for the analysis or TAP the tempo")
+            !other.grid.valid -> toast("The other deck has no BPM yet")
+            else -> {
+                engine.setMasterDeck(1 - deck)
+                d.engageSync(other)
             }
         }
     }
 
     override fun onMaster(deck: Int) {
         engine.setMasterDeck(deck)
-        toast("Deck ${if (deck == 0) "A" else "B"} is master")
+        toast("Deck ${DECK_NAMES[deck]} is the sync master")
+    }
+
+    override fun onTap(deck: Int) {
+        val now = SystemClock.elapsedRealtime()
+        val times = taps[deck]
+        if (times.isNotEmpty() && now - times.last() > 2200) times.clear()
+        times.add(now)
+        if (times.size > 8) times.removeAt(0)
+        if (times.size < 3) return
+        var bpm = 60_000.0 * (times.size - 1) / (times.last() - times.first())
+        while (bpm < 70.0) bpm *= 2.0
+        while (bpm > 180.0) bpm /= 2.0
+        val d = engine.decks[deck]
+        d.setGrid(bpm, d.positionSec, 2.0)
+    }
+
+    override fun onHotCuesChanged(deck: Int) {
+        loadedTracks[deck]?.let { cache.putHotCues(it, engine.decks[deck].hotCues) }
+    }
+
+    private fun toggleSmartCfx() {
+        val on = !engine.decks[0].smartCfx
+        engine.decks.forEach { it.smartCfx = on }
+    }
+
+    private fun stepFxType(step: Int) {
+        val types = FxType.values()
+        engine.beatFx.type = types[Math.floorMod(engine.beatFx.type.ordinal + step, types.size)]
+    }
+
+    private fun stepFxBeats(step: Int) {
+        fxBeatIndex = (fxBeatIndex + step).coerceIn(0, FX_BEATS.size - 1)
+        engine.beatFx.beats = FX_BEATS[fxBeatIndex]
     }
 
     // ---------------------------------------------------------------------
-    // FLX4 callbacks
+    // DDJ-FLX4
     // ---------------------------------------------------------------------
 
     override fun onMidiStatus(name: String?) {
         midiName = name
-        updateStatusLine()
+        if (name != null) toast("$name connected")
     }
 
-    override fun onDeckPlay(deck: Int) = engine.decks[deck].togglePlay()
-    override fun onDeckCue(deck: Int) = engine.decks[deck].cue()
-
-    override fun onDeckSync(deck: Int) = toggleSync(deck)
-
-    override fun onDeckSyncLong(deck: Int) {
-        engine.setMasterDeck(deck)
-        toast("Deck ${if (deck == 0) "A" else "B"} is master")
-    }
-
-    override fun onDeckTempo(deck: Int, value14: Int) {
-        val normalized = ((value14 - 8192) / 8192.0).coerceIn(-1.0, 1.0)
-        engine.decks[deck].setTempoNormalized(normalized)
-    }
-
-    override fun onDeckVolume(deck: Int, value14: Int) {
-        engine.decks[deck].volume = unit(value14)
-    }
-
-    override fun onDeckTrim(deck: Int, value14: Int) {
-        engine.decks[deck].trim = unit(value14)
-    }
-
-    override fun onDeckEq(deck: Int, band: Int, value14: Int) {
-        val value = unit(value14)
-        when (band) {
-            0 -> engine.decks[deck].eqHigh = value
-            1 -> engine.decks[deck].eqMid = value
-            2 -> engine.decks[deck].eqLow = value
+    override fun onButton(deck: Int, button: Flx4Button, down: Boolean) {
+        val d = engine.decks.getOrNull(deck)
+        when (button) {
+            Flx4Button.CUE -> if (down) d?.cueDown() else d?.cueUp()
+            Flx4Button.JOG_TOUCH -> if (down) d?.scratchBegin() else d?.scratchEnd()
+            Flx4Button.FX_CHANNEL -> {
+                // A three-position switch: CH1, CH2, or both for the master.
+                fxChannels[deck] = down
+                engine.fxTarget = when {
+                    fxChannels[0] && !fxChannels[1] -> AudioEngine.FX_DECK_A
+                    fxChannels[1] && !fxChannels[0] -> AudioEngine.FX_DECK_B
+                    else -> AudioEngine.FX_MASTER
+                }
+            }
+            Flx4Button.LOOP_IN -> if (d != null) {
+                val now = SystemClock.uptimeMillis()
+                if (down) {
+                    d.setLoopIn()
+                    loopInDownAt[deck] = now
+                } else if (now - loopInDownAt[deck] > 500) {
+                    d.loopFromIn(4.0) // IN / 4 BEAT held
+                }
+            }
+            else -> if (down) onPress(deck, d, button)
         }
     }
 
-    override fun onDeckFilter(deck: Int, value14: Int) {
-        engine.decks[deck].filter = unit(value14)
+    private fun onPress(deck: Int, d: Deck?, button: Flx4Button) {
+        when (button) {
+            Flx4Button.PLAY -> onPlay(deck)
+            Flx4Button.TO_START -> d?.seekTo(0.0)
+            Flx4Button.SYNC -> onSync(deck)
+            Flx4Button.MASTER -> onMaster(deck)
+            Flx4Button.TEMPO_RANGE -> d?.cycleTempoRange()
+            Flx4Button.LOOP_OUT -> d?.setLoopOut()
+            Flx4Button.RELOOP -> d?.toggleLoop()
+            Flx4Button.RELOOP_STOP -> {
+                d?.exitLoop()
+                d?.pause()
+            }
+            Flx4Button.LOOP_HALVE -> d?.scaleLoop(0.5)
+            Flx4Button.LOOP_DOUBLE -> d?.scaleLoop(2.0)
+            Flx4Button.JUMP_BACK -> d?.beatJump(-QUICK_JUMP_BEATS)
+            Flx4Button.JUMP_FORWARD -> d?.beatJump(QUICK_JUMP_BEATS)
+            Flx4Button.PFL -> d?.let { it.cueEnabled = !it.cueEnabled }
+            Flx4Button.QUANTIZE -> d?.let {
+                it.quantize = !it.quantize
+                toast("Quantize ${if (it.quantize) "on" else "off"}")
+            }
+            Flx4Button.LOAD -> loadSelected(deck)
+            Flx4Button.BROWSE_PRESS -> showLibrary(!libraryVisible)
+            Flx4Button.SMART_CFX -> toggleSmartCfx()
+            Flx4Button.SMART_FADER -> toast(getString(R.string.not_supported, "Smart Fader"))
+            Flx4Button.MASTER_CUE -> engine.masterCue = !engine.masterCue
+            Flx4Button.FX_SELECT -> stepFxType(1)
+            Flx4Button.FX_SELECT_PREV -> stepFxType(-1)
+            Flx4Button.FX_BEAT_LEFT -> stepFxBeats(-1)
+            Flx4Button.FX_BEAT_RIGHT -> stepFxBeats(1)
+            Flx4Button.FX_ON -> engine.beatFx.enabled = !engine.beatFx.enabled
+            Flx4Button.FX_CLEAR -> engine.beatFx.enabled = false
+            else -> Unit // SHIFT itself: its combinations arrive as distinct notes
+        }
     }
 
-    override fun onDeckCueToggle(deck: Int) {
-        engine.decks[deck].cueEnabled = !engine.decks[deck].cueEnabled
+    override fun onKnob(deck: Int, knob: Flx4Knob, value: Float) {
+        val d = engine.decks.getOrNull(deck)
+        when (knob) {
+            // The fader's low end is its "+" side: 0 is fastest, 1 is slowest.
+            Flx4Knob.TEMPO -> d?.setTempoNormalized(1.0 - 2.0 * value)
+            Flx4Knob.TRIM -> d?.trim = value
+            Flx4Knob.EQ_HIGH -> d?.eqHigh = value
+            Flx4Knob.EQ_MID -> d?.eqMid = value
+            Flx4Knob.EQ_LOW -> d?.eqLow = value
+            Flx4Knob.VOLUME -> d?.volume = value
+            Flx4Knob.FILTER -> d?.filter = value
+            Flx4Knob.CROSSFADER -> engine.crossfader = value
+            Flx4Knob.HEADPHONE_MIX -> engine.headphoneMix = value
+            Flx4Knob.HEADPHONE_LEVEL -> engine.headphoneGain = value
+            Flx4Knob.MASTER_LEVEL -> engine.masterGain = value
+            Flx4Knob.FX_DEPTH -> engine.beatFx.depth = value
+        }
     }
 
-    override fun onDeckTempoRange(deck: Int) {
-        engine.decks[deck].cycleTempoRange()
-        toast("Tempo range ${(engine.decks[deck].tempoRange * 100).roundToInt()}%")
-    }
-
-    override fun onDeckQuantize(deck: Int) {
-        engine.decks[deck].quantize = !engine.decks[deck].quantize
-        toast("Quantize ${if (engine.decks[deck].quantize) "on" else "off"}")
-    }
-
-    override fun onDeckJog(deck: Int, delta: Int, shift: Boolean) {
+    override fun onJog(deck: Int, jog: Flx4Jog, delta: Int) {
         val d = engine.decks[deck]
-        val secondsPerTick = when {
-            shift -> 0.02
-            d.playing -> 0.003
-            else -> 0.012
-        }
-        d.seekTo((d.positionSec + delta * secondsPerTick).coerceAtLeast(0.0))
-    }
-
-    override fun onCrossfader(value14: Int) {
-        engine.crossfader = unit(value14)
-    }
-
-    override fun onHeadphoneMix(value14: Int) {
-        engine.headphoneMix = unit(value14)
-    }
-
-    override fun onBrowse(delta: Int) {
-        if (tracks.isEmpty()) {
-            showLibrary(true)
-            return
-        }
-        showLibrary(true)
-        val next = (selectedTrack + if (delta > 0) 1 else -1)
-            .coerceIn(0, tracks.size - 1)
-        if (next != selectedTrack) {
-            selectedTrack = next
-            libraryAdapter.notifyDataSetChanged()
-            libraryList.smoothScrollToPosition(next)
-        }
-    }
-
-    override fun onBrowsePress() {
-        showLibrary(libraryPanel.visibility != View.VISIBLE)
-    }
-
-    override fun onLoad(deck: Int) {
-        if (tracks.isEmpty()) {
-            showLibrary(true)
-            toast("Choose a music folder first")
-        } else {
-            loadSelected(deck)
-        }
-    }
-
-    override fun onPad(deck: Int, note: Int, shift: Boolean) {
-        val d = engine.decks[deck]
-        when (d.padMode) {
-            Deck.PAD_HOT_CUE -> {
-                if (note in 0..7) {
-                    if (shift) d.deleteHotCue(note) else d.triggerHotCue(note)
-                }
-            }
-
-            Deck.PAD_BEAT_LOOP -> {
-                if (shift) {
-                    d.toggleLoop()
-                    if (!d.loopActive) clearLoopPad(deck)
-                } else if (note in 0x60..0x67) {
-                    applyBeatLoop(deck, note - 0x60)
-                }
-            }
-
-            Deck.PAD_BEAT_JUMP -> {
-                if (!shift && note in 0x20..0x27) {
-                    d.beatJump(JUMP_OFFSETS[note - 0x20])
-                }
-            }
+        when (jog) {
+            Flx4Jog.SCRATCH -> if (d.scratching) d.scratchMove(delta * Deck.JOG_TICK_SECONDS) else d.bend(delta)
+            Flx4Jog.BEND -> d.bend(delta)
+            Flx4Jog.SEARCH -> d.seekBy(delta * 0.2)
         }
     }
 
     override fun onPadMode(deck: Int, mode: Int) {
-        engine.decks[deck].setPadMode(mode)
-        clearLoopPad(deck)
-    }
-
-    // ---------------------------------------------------------------------
-    // Sync and tempo helpers
-    // ---------------------------------------------------------------------
-
-    private fun toggleSync(index: Int) {
-        val deck = engine.decks[index]
-        if (deck.syncEnabled) {
-            deck.releaseSync()
-            return
-        }
-        if (!deck.grid.valid) {
-            toast("Load and analyze a track before syncing")
-            return
-        }
-        val otherIndex = 1 - index
-        val other = engine.decks[otherIndex]
-        if (!other.grid.valid) {
-            toast("The other deck has no BPM grid yet")
-            return
-        }
-        engine.setMasterDeck(otherIndex)
-        deck.engageSync(other)
-        toast("SYNC: ${other.effectiveBpm().roundToInt()} BPM")
-    }
-
-    private fun tapTempo(index: Int) {
-        val now = SystemClock.elapsedRealtime()
-        val tapsForDeck = taps[index]
-        if (tapsForDeck.isNotEmpty() && now - tapsForDeck.last() > 2200) tapsForDeck.clear()
-        tapsForDeck.add(now)
-        if (tapsForDeck.size > 8) tapsForDeck.removeAt(0)
-        if (tapsForDeck.size >= 3) {
-            var total = 0L
-            for (i in 1 until tapsForDeck.size) total += tapsForDeck[i] - tapsForDeck[i - 1]
-            val average = total / (tapsForDeck.size - 1).toDouble()
-            if (average > 0.0) {
-                var bpm = 60_000.0 / average
-                while (bpm < 70.0) bpm *= 2.0
-                while (bpm > 180.0) bpm /= 2.0
-                engine.decks[index].setGrid(bpm, engine.decks[index].positionSec, 1.0)
-            }
+        when (mode) {
+            Deck.PAD_SAMPLER -> toast(getString(R.string.not_supported, "Sampler"))
+            Deck.PAD_KEYBOARD -> toast(getString(R.string.not_supported, "Keyboard mode"))
+            Deck.PAD_KEY_SHIFT -> toast(getString(R.string.not_supported, "Key Shift"))
+            else -> engine.decks[deck].padMode = mode
         }
     }
 
-    private fun applyBeatLoop(deck: Int, index: Int) {
+    override fun onPad(deck: Int, mode: Int, pad: Int, shift: Boolean, down: Boolean) {
         val d = engine.decks[deck]
-        if (!d.grid.valid) {
-            toast("Tap the tempo first")
+        if (!down) {
+            d.padUp(mode, pad)
             return
         }
-        val beats = 0.25 * 2.0.pow(index)
-        d.setBeatLoop(beats)
-        loopPads[deck] = if (d.loopActive) index else -1
-        deckPanels[deck].setLoopPad(loopPads[deck])
+        d.padDown(mode, pad, shift)
+        if (mode == Deck.PAD_HOT_CUE) onHotCuesChanged(deck)
     }
 
-    private fun clearLoopPad(deck: Int) {
-        loopPads[deck] = -1
-        deckPanels[deck].setLoopPad(-1)
+    override fun onBrowse(delta: Int, shift: Boolean) {
+        showLibrary(true)
+        if (visibleTracks.isEmpty()) return
+        selectedTrack = (selectedTrack + delta * if (shift) 10 else 1).coerceIn(0, visibleTracks.size - 1)
+        trackAdapter.notifyDataSetChanged()
+        libraryList.smoothScrollToPosition(selectedTrack)
     }
-
-    private fun unit(value14: Int): Float = (value14 / 16383f).coerceIn(0f, 1f)
 
     // ---------------------------------------------------------------------
     // Library
     // ---------------------------------------------------------------------
 
+    private val libraryVisible: Boolean get() = libraryPanel.visibility == View.VISIBLE
+
     private fun showLibrary(show: Boolean) {
         libraryPanel.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) {
+            getSystemService(InputMethodManager::class.java)
+                .hideSoftInputFromWindow(librarySearch.windowToken, 0)
+            librarySearch.clearFocus()
+        }
     }
 
     private fun chooseFolder() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-        intent.addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         )
         try {
+            @Suppress("DEPRECATION")
             startActivityForResult(intent, REQ_FOLDER)
         } catch (e: Exception) {
             toast("No file picker available: ${e.message}")
@@ -667,414 +545,199 @@ class MainActivity : Activity(), Flx4Midi.Listener, DeckPanel.Callbacks {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_FOLDER || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
-        try {
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-        } catch (_: Exception) {
-            // The folder can still be used for this session.
+        // Without the persisted grant the folder still works for this session.
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        folderUri = uri
         preferences.edit().putString(PREF_FOLDER, uri.toString()).apply()
         scanFolder(uri)
     }
 
-
     private fun scanFolder(uri: Uri) {
-        libraryPathLabel.text = "Scanning…"
+        libraryInfo.text = "Scanning…"
         work.execute {
             val found = try {
                 library.scan(uri)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 emptyList()
             }
             ui.post {
                 tracks.clear()
                 tracks.addAll(found)
-                selectedTrack = if (found.isEmpty()) -1 else 0
-                libraryAdapter.notifyDataSetChanged()
-                libraryPathLabel.text = if (found.isEmpty()) {
-                    "No audio files in this folder"
-                } else {
-                    "${found.size} tracks"
-                }
-                if (found.isEmpty()) toast("No audio files found")
+                filterTracks()
             }
         }
     }
 
+    private fun filterTracks() {
+        val query = librarySearch.text.toString().trim()
+        visibleTracks = if (query.isEmpty()) tracks else tracks.filter { it.name.contains(query, ignoreCase = true) }
+        selectedTrack = if (visibleTracks.isEmpty()) -1 else 0
+        trackAdapter.notifyDataSetChanged()
+        libraryInfo.text = when {
+            tracks.isEmpty() -> "No audio files — choose a folder"
+            query.isEmpty() -> "${tracks.size} tracks"
+            else -> "${visibleTracks.size} of ${tracks.size}"
+        }
+    }
+
     private fun loadSelected(deck: Int) {
-        val track = tracks.getOrNull(selectedTrack)
+        val track = visibleTracks.getOrNull(selectedTrack)
         if (track == null) {
             showLibrary(true)
             toast("Select a track first")
-            return
+        } else {
+            loadTrack(deck, track)
         }
-        loadTrack(deck, track)
     }
 
     private fun loadTrack(index: Int, track: Track) {
         val token = loadTokens.incrementAndGet(index)
-        engine.decks[index].clear()
-        clearLoopPad(index)
-        deckPanels[index].setLoading("Loading ${track.name}…")
+        val deck = engine.decks[index]
+        val panel = panels[index]
+        val stale = { loadTokens.get(index) != token }
+        deck.clear()
+        loadedTracks[index] = null
+        panel.message = "Loading ${track.name}…"
+        panel.messageIsError = false
         work.execute {
-            var source: AudioSource? = null
             try {
-                source = AudioSource(this, track.uri)
+                val source = AudioSource(this, track.uri)
                 var title = track.name.substringBeforeLast('.').ifBlank { track.name }
                 var artist = ""
-                var duration = source.durationSec
                 val retriever = MediaMetadataRetriever()
                 try {
                     retriever.setDataSource(this, track.uri)
-                    title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                        ?.takeIf { it.isNotBlank() } ?: title
-                    artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                        ?: ""
-                    if (duration <= 0.0) {
-                        duration = (retriever.extractMetadata(
-                            MediaMetadataRetriever.METADATA_KEY_DURATION
-                        )?.toDoubleOrNull() ?: 0.0) / 1000.0
-                    }
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                        ?.takeIf { it.isNotBlank() }?.let { title = it }
+                    artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty()
                 } catch (_: Exception) {
+                    // Tags are optional; the file name is a fine title.
                 } finally {
                     retriever.release()
                 }
-
-                val loaded = source
-                val loadedTitle = title
-                val loadedArtist = artist
-                val loadedDuration = duration
                 ui.post {
-                    if (loadTokens.get(index) != token) {
-                        loaded.close()
+                    if (stale()) {
+                        source.close()
                         return@post
                     }
-                    engine.decks[index].load(
-                        loaded,
-                        loadedTitle,
-                        loadedArtist,
-                        loadedDuration
-                    )
-                    loaded.start()
-                    deckPanels[index].setLoading(null)
+                    deck.load(source, title, artist, source.durationSec)
+                    deck.setHotCues(cache.hotCues(track))
+                    source.start()
+                    loadedTracks[index] = track
+                    panel.message = null
                 }
-
-                val analysis = cache.get(track) ?: try {
-                    BpmAnalyzer.analyze(this, track.uri)
-                } catch (_: Exception) {
-                    null
-                }
-                if (analysis != null) {
-                    cache.put(track, analysis)
-                    ui.post {
-                        if (loadTokens.get(index) != token) return@post
-                        engine.decks[index].setGrid(
-                            analysis.bpm,
-                            analysis.anchorSec,
-                            analysis.confidence
-                        )
-                    }
-                }
+                TrackAnalyzer.analyze(
+                    this, track, cache, stale,
+                    onWaveform = { waveform -> ui.post { if (!stale()) deck.waveform = waveform } },
+                    onGrid = { grid -> ui.post { if (!stale()) deck.setGrid(grid.bpm, grid.anchorSec, grid.confidence) } }
+                )
             } catch (e: Exception) {
-                try {
-                    source?.close()
-                } catch (_: Exception) {
-                }
                 ui.post {
-                    if (loadTokens.get(index) != token) return@post
-                    deckPanels[index].setError("Unsupported or unreadable file")
-                    toast(e.message ?: "Cannot read this file")
+                    if (stale()) return@post
+                    panel.message = "Cannot play ${track.name}"
+                    panel.messageIsError = true
                 }
             }
         }
     }
 
     private inner class TrackAdapter : BaseAdapter() {
-        override fun getCount(): Int = tracks.size
-        override fun getItem(position: Int): Any = tracks[position]
+        override fun getCount(): Int = visibleTracks.size
+        override fun getItem(position: Int): Any = visibleTracks[position]
         override fun getItemId(position: Int): Long = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = convertView ?: layoutInflater.inflate(
-                android.R.layout.simple_list_item_2,
-                parent,
-                false
+            val view = convertView ?: layoutInflater.inflate(R.layout.row_track, parent, false)
+            val track = visibleTracks[position]
+            view.findViewById<TextView>(R.id.row_title).text =
+                track.name.substringBeforeLast('.').ifBlank { track.name }
+            val analysis = cache.get(track)
+            view.findViewById<TextView>(R.id.row_info).text = if (analysis == null) "" else String.format(
+                Locale.US, "%.1f BPM  ·  %d:%02d",
+                analysis.bpm, analysis.durationSec.toInt() / 60, analysis.durationSec.toInt() % 60
             )
-            val track = tracks[position]
-            val title = view.findViewById<TextView>(android.R.id.text1)
-            val subtitle = view.findViewById<TextView>(android.R.id.text2)
-            title.text = track.name.substringBeforeLast('.').ifBlank { track.name }
-            title.setTextColor(getColor(R.color.text))
-            title.textSize = 13f
-            subtitle.setTextColor(getColor(R.color.text_dim))
-            subtitle.textSize = 9f
-            val cached = cache.get(track)
-            subtitle.text = if (cached != null) {
-                String.format(
-                    Locale.US,
-                    "%.1f BPM  •  %s",
-                    cached.bpm,
-                    formatTime(cached.durationSec)
-                )
-            } else {
-                "Double-tap LOAD on the FLX4 to load"
-            }
-            view.setBackgroundColor(
-                if (position == selectedTrack) getColor(R.color.line) else Color.TRANSPARENT
-            )
+            view.findViewById<View>(R.id.row_load_a).setOnClickListener { loadFromRow(0, track) }
+            view.findViewById<View>(R.id.row_load_b).setOnClickListener { loadFromRow(1, track) }
+            view.setBackgroundColor(getColor(if (position == selectedTrack) R.color.panel_alt else R.color.bg))
             return view
         }
     }
 
-    private fun formatTime(seconds: Double): String {
-        if (!seconds.isFinite() || seconds <= 0.0) return "--:--"
-        val total = seconds.toInt()
-        return String.format(Locale.US, "%02d:%02d", total / 60, total % 60)
+    private fun loadFromRow(deck: Int, track: Track) {
+        loadTrack(deck, track)
+        showLibrary(false)
     }
 
     // ---------------------------------------------------------------------
-    // Audio output selection
+    // Audio settings
     // ---------------------------------------------------------------------
 
-    private fun showAudioOutputs() {
-        val manager = getSystemService(AudioManager::class.java)
-        val devices = try {
-            manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.isSink }
-        } catch (_: Exception) {
-            emptyList()
+    private fun showAudioSettings() {
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
         }
-        val labels = ArrayList<String>()
-        devices.forEach { labels.add("${it.productName}  (${deviceTypeName(it.type)})") }
-        labels.add("Phone default")
+        fun slider(label: String, value: Float, onChange: (Float) -> Unit) {
+            content.addView(TextView(this).apply {
+                text = label
+                setTextColor(getColor(R.color.text_dim))
+                textSize = 11f
+            })
+            content.addView(FaderView(this).apply {
+                accent = getColor(R.color.accent)
+                show(value)
+                this.onChange = onChange
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad * 2))
+        }
+        slider("Master level", engine.masterGain) { engine.masterGain = it }
+        slider("Headphones level", engine.headphoneGain) { engine.headphoneGain = it }
+        slider("Headphones mix: CUE ◄ ► MASTER", engine.headphoneMix) { engine.headphoneMix = it }
+        content.addView(CheckBox(this).apply {
+            text = "Split cue on a stereo output (master left, headphones right)"
+            isChecked = engine.splitCue
+            setOnCheckedChangeListener { _, checked ->
+                engine.splitCue = checked
+                preferences.edit().putBoolean(PREF_SPLIT, checked).apply()
+            }
+        })
+
+        val devices = engine.outputs()
+        val labels = devices.map { describe(it) } + "Phone default"
         AlertDialog.Builder(this)
             .setTitle("Audio output")
-            .setItems(labels.toTypedArray()) { _, which ->
-                if (which == devices.size) {
-                    engine.setOutputDevice(null)
-                    toast("Using the phone default output")
-                } else {
-                    val accepted = engine.setOutputDevice(devices[which])
-                    toast(
-                        if (accepted) "Output: ${devices[which].productName}"
-                        else "This phone refused that output; check the USB audio support"
-                    )
-                }
-            }
-            .setNegativeButton("Cancel", null)
+            .setItems(labels.toTypedArray()) { _, which -> engine.selectOutput(devices.getOrNull(which)) }
+            .setView(content)
+            .setPositiveButton("Done", null)
             .show()
     }
 
-    private fun deviceTypeName(type: Int): String = when (type) {
-        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
-        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "earpiece"
-        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "headphones"
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "headset"
-        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB audio"
-        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
-        AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB accessory"
-        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth"
-        AudioDeviceInfo.TYPE_BLE_SPEAKER -> "Bluetooth LE"
-        AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE headset"
-        AudioDeviceInfo.TYPE_HDMI -> "HDMI"
-        else -> "output $type"
-    }
-
-    // ---------------------------------------------------------------------
-    // In-app updates
-    // ---------------------------------------------------------------------
-
-    private fun installedVersionCode(): Long = try {
-        val info = packageManager.getPackageInfo(packageName, 0)
-        if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
-            @Suppress("DEPRECATION")
-            info.versionCode.toLong()
+    private fun describe(device: AudioDeviceInfo): String {
+        val kind = when (device.type) {
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
+            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "earpiece"
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> "headphones"
+            AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET ->
+                if (AudioEngine.hasFourChannels(device)) "USB, master + headphones" else "USB, stereo"
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER -> "Bluetooth, latency!"
+            else -> "output"
         }
-    } catch (_: Exception) {
-        0L
+        return "${device.productName} ($kind)"
     }
 
-    private var autoCheckRunnable: Runnable? = null
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
-    private fun startAutoUpdateCheck() {
-        val runnable = object : Runnable {
-            override fun run() {
-                checkForUpdates(false)
-                ui.postDelayed(this, AUTO_CHECK_INTERVAL_MS)
-            }
-        }
-        autoCheckRunnable = runnable
-        ui.postDelayed(runnable, AUTO_CHECK_INTERVAL_MS)
-    }
-
-    private fun checkForUpdates(manual: Boolean) {
-        if (updateCheckRunning) return
-        val now = System.currentTimeMillis()
-        if (!manual && now - lastUpdateCheckMillis < UPDATE_INTERVAL_MS) return
-        lastUpdateCheckMillis = now
-        preferences.edit().putLong(PREF_LAST_UPDATE_CHECK, now).apply()
-        updateCheckRunning = true
-        updateButton.text = getString(R.string.btn_update_checking)
-        val current = installedVersionCode()
-        work.execute {
-            val info = try {
-                UpdateChecker.check(
-                    BuildConfig.UPDATE_OWNER,
-                    BuildConfig.UPDATE_REPO,
-                    current
-                )
-            } catch (_: Exception) {
-                null
-            }
-            ui.post {
-                updateCheckRunning = false
-                updateInfo = info
-                versionLabel.text = getString(R.string.version_format, versionName)
-                if (info != null) {
-                    updateButton.apply {
-                        text = getString(R.string.btn_update_available, info.versionName)
-                        backgroundTintList = ColorStateList.valueOf(getColor(R.color.accent))
-                        setTextColor(getColor(R.color.text))
-                    }
-                    if (manual) {
-                        showUpdateDialog(info)
-                    } else {
-                        toast(getString(R.string.update_title, info.versionName))
-                    }
-                } else {
-                    resetUpdateButton()
-                    if (manual) {
-                        showNoUpdateDialog()
-                    } else {
-                        toast(UpdateChecker.lastError ?: getString(R.string.no_update_found))
-                    }
-                }
-            }
-        }
-    }
-
-    private fun showUpdateDialog(info: UpdateChecker.UpdateInfo) {
-        val notes = info.notes.take(1400).ifBlank { "Bug fixes and improvements." }
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.update_title, info.versionName))
-            .setMessage(getString(R.string.update_available_message, notes))
-            .setPositiveButton(getString(R.string.update_now)) { _, _ -> beginUpdate(info) }
-            .setNeutralButton(getString(R.string.open_github)) { _, _ ->
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.htmlUrl)))
-                } catch (_: Exception) {
-                }
-            }
-            .setNegativeButton(getString(R.string.update_later), null)
-            .show()
-    }
-
-    private fun showNoUpdateDialog() {
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.update_title, versionName))
-            .setMessage(UpdateChecker.lastError ?: getString(R.string.no_update_found))
-            .setPositiveButton(getString(R.string.settings_cancel), null)
-            .show()
-    }
-
-    private fun resetUpdateButton() {
-        updateButton.apply {
-            backgroundTintList = ColorStateList.valueOf(getColor(R.color.panel_alt))
-            setTextColor(getColor(R.color.text))
-            text = getString(R.string.btn_check_updates)
-        }
-    }
-
-    private fun beginUpdate(info: UpdateChecker.UpdateInfo) {
-        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
-            pendingUpdateInfo = info
-            AlertDialog.Builder(this)
-                .setTitle(getString(R.string.allow_installs_title))
-                .setMessage(getString(R.string.allow_installs_message))
-                .setPositiveButton(getString(R.string.settings_open)) { _, _ ->
-                    try {
-                        startActivity(
-                            Intent(
-                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                Uri.parse("package:$packageName")
-                            )
-                        )
-                    } catch (e: Exception) {
-                        toast(getString(R.string.settings_open) + ": ${e.message}")
-                    }
-                }
-                .setNegativeButton(getString(R.string.settings_cancel)) { _, _ -> pendingUpdateInfo = null }
-                .show()
-            return
-        }
-
-        downloadCancelled = false
-        val progress = AlertDialog.Builder(this)
-            .setTitle(getString(R.string.downloading_title, info.versionName))
-            .setMessage("0%")
-            .setNegativeButton(getString(R.string.settings_cancel)) { _, _ -> downloadCancelled = true }
-            .setCancelable(false)
-            .create()
-        activeUpdateDialog = progress
-        progress.show()
-
-        work.execute {
-            try {
-                val apk = UpdateChecker.download(
-                    info = info,
-                    cacheDir = cacheDir,
-                    onProgress = { percent ->
-                        ui.post {
-                            if (progress.isShowing) progress.setMessage("$percent%")
-                        }
-                    },
-                    cancelled = { downloadCancelled }
-                )
-                ui.post {
-                    progress.dismiss()
-                    activeUpdateDialog = null
-                    try {
-                        UpdateInstaller.install(this, apk)
-                        toast(getString(R.string.installing_confirm))
-                    } catch (e: Exception) {
-                        AlertDialog.Builder(this)
-                            .setTitle(getString(R.string.install_failed))
-                            .setMessage(e.message ?: getString(R.string.no_update_found))
-                            .setPositiveButton(getString(R.string.settings_cancel), null)
-                            .show()
-                    }
-                }
-            } catch (e: Exception) {
-                ui.post {
-                    progress.dismiss()
-                    activeUpdateDialog = null
-                    if (!downloadCancelled) {
-                        AlertDialog.Builder(this)
-                            .setTitle(getString(R.string.download_failed))
-                            .setMessage(e.message ?: getString(R.string.no_update_found))
-                            .setPositiveButton(getString(R.string.settings_cancel), null)
-                            .show()
-                    }
-                    downloadCancelled = false
-                }
-            }
-        }
-    }
-
-    private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-    companion object {
-        private const val REQ_FOLDER = 41
-        private const val PREFS = "flx4-preferences"
-        private const val PREF_FOLDER = "folder"
-        private const val PREF_SPLIT = "split_cue"
-        private const val PREF_LAST_UPDATE_CHECK = "last_update_check"
-        private const val UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000L
-        private const val AUTO_CHECK_INTERVAL_MS = 30 * 60 * 1000L
-        private val JUMP_OFFSETS = doubleArrayOf(-1.0, 1.0, -2.0, 2.0, -4.0, 4.0, -8.0, 8.0)
+    private companion object {
+        const val REQ_FOLDER = 41
+        const val PREFS = "flx4-preferences"
+        const val PREF_FOLDER = "folder"
+        const val PREF_SPLIT = "split_cue"
+        const val PREF_ZOOM = "zoom"
+        const val QUICK_JUMP_BEATS = 16.0
+        val DECK_NAMES = arrayOf("A", "B")
+        val FX_BEATS = doubleArrayOf(0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0)
+        val FX_BEAT_LABELS = arrayOf("1/8", "1/4", "1/2", "3/4", "1", "2", "4", "8")
+        val FX_TARGET_LABELS = arrayOf("CH A", "CH B", "MASTER")
     }
 }
