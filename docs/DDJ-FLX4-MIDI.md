@@ -87,7 +87,8 @@ if a mode-button message was missed.
 | SHIFT + LOAD 2 | Note | `0x7A` | Open / close the library (rekordbox for Android: browse window) | yes |
 
 The headphone controls act on the app's headphone bus, which is only audible
-on a four-channel USB output or in split-cue mode.
+on a four-channel USB output or with "Headphones over 2 channels" (the FLX4's
+rear switch on MONO): see `docs/ANDROID-LIMITS.md`, section 2.
 
 ## Beat FX (channel 5; ON/OFF and CH2 select also on channel 6)
 
@@ -122,7 +123,7 @@ Note On to the same address as the control, `0x7F` on and `0x00` off.
 | BEAT FX ON/OFF | ch 5 `0x47` | Blinks on `0x7F` (effect on), steady on `0x00` |
 | SMART CFX | ch 7 `0x00` | Smart CFX on |
 | MASTER CUE | ch 7 `0x63` | Master cue on |
-| Channel level meter | CC ch 1/2 `0x02` | Post-fader level, 0–127 |
+| Channel level meter | CC ch 1/2 `0x02` | Level before the channel fader. Pioneer's bands light 2 green, 2 orange and 1 red LED from 38, 65, 87, 101 and 119; the app sends 51, 76, 94, 110 or 127 for peaks from -24, -12, -6, -3 and 0 dBFS (`MixerMath.ledLevel`) |
 | Jog "track loaded" | ch 16 note `0x00` / `0x01` | A track is loaded; `0x00` then `0x7F` on each load replays the jog animation |
 
 Pad LEDs are also written to the SHIFT layer so they stay lit while SHIFT is
@@ -139,12 +140,13 @@ when its position changes: a repeated answer can never undo a change made on
 the touch screen. The decoder is reset on each connection, so the first answer
 always applies. Not yet verified on hardware.
 
-## Sync, loops and tap, as rekordbox plays them
+## Sync, loops and tap
 
 - **BEAT SYNC** matches the tempo (87 against 174 BPM counts as the same
-  tempo) and the beat position. A synced deck lands on the master's beat when
-  it starts and after a hot cue, a memory cue or a search; a jog nudge is
-  kept, sync then holds the tempo around it. SYNC off keeps the tempo.
+  tempo), and pressed while both decks play, the beat position too. After
+  that it never moves the deck by itself: started, cued, jumped or nudged, the
+  deck plays from where the DJ put it and sync holds the tempo and that place
+  against the beat. SYNC off keeps the tempo.
 - **Sync master**: the deck the other one was synced to. When it stops, the
   deck still playing takes the role, so the deck on air never follows a track
   being loaded or cued. The long press hands it over by hand.

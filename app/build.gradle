@@ -11,8 +11,8 @@ android {
         applicationId "io.github.timotheegrollier.flx4pocket"
         minSdk 26
         targetSdk 34
-        versionCode 8
-        versionName "0.6.0"
+        versionCode 9
+        versionName "0.6.1"
 
         // Used by the in-app updater and by the release workflow.
         buildConfigField "String", "UPDATE_OWNER", '"stxtxm"'

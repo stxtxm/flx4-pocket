@@ -95,9 +95,8 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
         setLed(channel + 1, note, on)
     }
 
-    /** Channel level meter, 0..1. */
-    fun setLevel(deck: Int, level: Float) =
-        send(0xB0 or deck, MidiMap.CC_LEVEL_METER, (level.coerceIn(0f, 1f) * 127f).toInt())
+    /** Channel level meter, from a linear peak (1 = full scale). */
+    fun setLevel(deck: Int, peak: Float) = send(0xB0 or deck, MidiMap.CC_LEVEL_METER, MixerMath.ledLevel(peak))
 
     private fun send(status: Int, data1: Int, data2: Int) {
         val port = midiInput ?: return

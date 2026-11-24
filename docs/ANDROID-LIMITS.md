@@ -40,37 +40,55 @@ Sources: DDJ-FLX4 Instruction Manual, "Connections", "Troubleshooting" and
 Android's public `UsbManager` ("only host mode is supported in the public
 API", <https://developer.android.com/reference/android/hardware/usb/UsbManager>).
 
-## 2. USB audio through the FLX4 depends on the phone
+## 2. Headphones on the FLX4 depend on the phone
 
-The FLX4 contains a class-compliant four-channel USB audio interface: outputs
-1-2 feed MASTER, outputs 3-4 feed PHONES. Pioneer's own page lists USB audio
-playback for iPhone/iPad and says it is not available on Android devices with
-its apps, and Algoriddim reports that independent cue output is missing on
-many Android devices. Whether a given phone exposes all four channels to apps
-is decided by its USB audio HAL, not by this app.
+The FLX4 contains a class-compliant USB audio interface with four outputs:
+1-2 feed MASTER, 3-4 feed PHONES. On a computer, rekordbox sends the master
+to 1-2 and the headphone cue to 3-4. Many Android phones only deliver the
+first two of the four: the master plays, the headphones stay silent. On the
+Pixel 9 family under Android 15 this is a known Android bug, still open in
+November 2026, that hits rekordbox and djay with this very controller too.
+
+AlphaTheta's answer is the **Android MONO/STEREO** switch on the FLX4's rear
+panel. On MONO, "the master and headphones will be output in mono": the FLX4
+then takes the master and the headphones each in mono, over the two channels
+every phone delivers.
 
 What the app does:
 
-- When a USB audio output appears it is selected automatically.
-- If Android reports four or more channels for it, the app opens a
-  four-channel stream (channel index mask) with master on 1-2 and headphones
-  on 3-4. The status line then reads `master 1-2 + phones 3-4`.
-- If the device reports stereo only, or refuses the four-channel stream, the
-  app plays the master in stereo. The status line reads `stereo`. On the
-  FLX4 that normally means sound on MASTER and nothing on PHONES.
-- **Split cue** (AUDIO menu) is the fallback for any stereo output: master on
-  the left, headphones on the right, through a splitter cable.
-
-**This path is untested on hardware.** The code follows the documented Android
-APIs, but nobody has yet confirmed on a Pixel 9a which of the three cases
-applies. `docs/TESTING.md` lists the adb commands that show what the phone
-exposes.
+- A USB audio output that appears is selected automatically.
+- If Android reports four channels for it, the app opens a four-channel
+  stream: master on 1-2, headphones on 3-4. The status line reads
+  `master 1-2 + phones 3-4`. On a phone that delivers them all, that is the
+  setup rekordbox uses on a computer.
+- **Headphones over 2 channels** (AUDIO menu) sends master mono on the left
+  and headphones mono on the right instead, and reopens the output at once.
+  The status line reads `split cue`. Use it with the FLX4's switch on MONO
+  when its headphones stay silent, and with a splitter cable on a phone's own
+  jack.
+- **Never tick it with the FLX4 switch on STEREO**: the headphone cue would
+  play on the right speaker. Set the switch with the FLX4 unplugged, then plug
+  it in and tick the box. The box is remembered: untick it before setting the
+  switch back to STEREO. (It starts unticked in 0.6.1: the Split cue box of
+  earlier versions, which did nothing on the FLX4, is not carried over.) Check once: deck 2's fader down, its CUE on;
+  deck 2 must be heard in the headphones only. That the FLX4 puts the master
+  on the left and the headphones on the right is what rekordbox's and djay's
+  split outputs do, but AlphaTheta does not say it in so many words.
+- The app cannot see the switch, so it never picks the mono layout by itself.
 
 Sources:
 
-- <https://www.pioneerdj.com/product/dj-controllers/ddj-flx4>
-- <https://community.algoriddim.com/t/how-to-pre-cue-in-djay-for-android/35402>
-- <https://developer.android.com/reference/android/media/AudioFormat.Builder#setChannelIndexMask(int)>
+- AlphaTheta FAQ, DDJ-FLX4 on Android, "2-stereo outputs cannot be done on
+  some Android devices" and the MONO switch:
+  <https://support.alphatheta.com/en-US/articles/26320003885849>
+- rekordbox FAQ, the same answer:
+  <https://rekordbox.com/en/support/faq/troubleshooting-errors-android/#faq-q110088>
+- The Pixel 9 bug (outputs 3 and 4 silent with the DDJ-FLX4, FLX2, GRV6):
+  <https://github.com/google/oboe/issues/2204>
+- djay on the same limit and its split output:
+  <https://help.algoriddim.com/topic/first-steps/audio-setup?os=android>
+- DDJ-FLX4 Instruction Manual, "Android MONO/STEREO switch" and "Monitoring
+  with headphones".
 
 ## 3. The installer confirmation cannot be removed
 

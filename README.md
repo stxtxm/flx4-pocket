@@ -14,7 +14,7 @@ Beat FX and a crossfader.
 
 Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
-> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 to 0.6.0
+> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 to 0.6.1
 > changes (loops, sync, beat grid, latency, recording, upright screen) are
 > covered by JVM tests (DSP, deck logic, the MIDI address table, the real
 > screen under Robolectric) but not yet by a hardware check. See
@@ -22,7 +22,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 > [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for what Android itself may
 > refuse (bus power, four-channel USB audio, latency).
 
-## What is in 0.6.0
+## What is in 0.6.1
 
 **Mixing from the phone**
 
@@ -51,11 +51,12 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 - KEY (keylock): the tempo changes, the pitch does not (WSOLA time-stretch).
 - A beat grid that holds for a whole track: the tempo to a few thousandths of
   a BPM, from the whole track, read between 89.5 and 179 BPM (174 is not 87).
-- Beat sync as rekordbox plays it: the synced deck takes the master's tempo
-  and lands on its beat when it starts and after a hot cue, a memory cue or a
-  search; a jog nudge is kept; SYNC off keeps the tempo; half and double tempo
-  sync at the same speed. The deck on air is the master: one being loaded or
-  cued under it never takes it along.
+- Beat sync: the synced deck takes the master's tempo and follows it;
+  pressed while both decks play, SYNC also puts it on the master's beat.
+  Started, cued or jumped afterwards, it plays from where you put it and sync
+  holds that place; a jog nudge is kept; SYNC off keeps the tempo; half and
+  double tempo sync at the same speed. The deck on air is the master: one
+  being loaded or cued under it never takes it along.
 - Loops as rekordbox plays them on the FLX4: IN, OUT, 4 BEAT / EXIT, halve /
   double, beat loops of 1/4 to 32 beats. The length shows on the 4 BEAT / EXIT
   button and on the BEAT LOOP pads. With quantize (Q) the points snap to the
@@ -82,8 +83,9 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   Android 10, the app's own Music folder): the master output sample for
   sample, at the output's rate.
 - Mixer: trim, three-band EQ (-26 / +6 dB, like a DJM), filter, channel faders
-  with level meters, equal-power crossfader, headphone cue buttons, master
-  peak limiter. Faders are ramped (no zipper noise); audio read between two
+  with level meters read before the fader (3 dB a segment, amber from
+  -6 dBFS, red at 0), equal-power crossfader, headphone cue buttons, master
+  peak limiter (red on its meter means the limiter is at work). Faders are ramped (no zipper noise); audio read between two
   samples (pitched, at another rate, after a jump) goes through a windowed
   sinc that keeps the highs.
 - Beat FX on deck A, deck B or the master: echo, low-cut echo, reverb,
@@ -118,8 +120,11 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 - The controller's sound card is selected automatically when Android exposes
   it. With four output channels the master goes to 1-2 (MASTER out) and the
   headphone bus to 3-4 (PHONES), with CUE buttons, headphones mix and level
-  working as on the hardware. If Android only offers stereo, the app falls back
-  to stereo or to split cue.
+  working as on the hardware. On phones that only deliver two (the Pixel 9
+  family), the FLX4's rear switch on MONO and **Headphones over 2 channels**
+  give master and headphones, each in mono.
+- The channel level LEDs show each deck before its fader, as on the hardware
+  with rekordbox: TRIM so the loudest parts light orange.
 
 **Updates**
 
@@ -139,7 +144,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.6.0.apk
+   adb install -r FLX4-Pocket-0.6.1.apk
    ```
 3. Open FLX4 Pocket and add your music in the library: **+ FOLDER** takes a
    folder with its subfolders (add as many as you like), **+ TRACKS** single
@@ -155,9 +160,15 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    green and shows which output is in use. Turn the phone's media volume all the way up: Android
    scales the USB output by it. Set the level with the FLX4's MASTER LEVEL
    knob.
-5. **AUDIO** lists the outputs and holds the master / headphones levels. On a
-   stereo-only output, **Split cue** sends the master left and the headphones
-   right for a splitter cable.
+5. **AUDIO** lists the outputs and holds the master / headphones levels. If
+   the FLX4's headphones stay silent (the Pixel 9 family only sends it two
+   channels): unplug the FLX4, set the **Android MONO/STEREO** switch on its
+   rear panel to **MONO**, plug it back in, then tick **Headphones over 2
+   channels**: master and headphones each in mono. Check once: deck 2's fader
+   down and its CUE on, deck 2 must be heard in the headphones only. Never
+   tick that box with the switch on STEREO; the app remembers it, so untick it
+   before you set the switch back to STEREO (see
+   [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md)).
 
 ### Do not open the APK on Fedora/GNOME
 
@@ -170,7 +181,7 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.6.0.apk
+adb install -r FLX4-Pocket-0.6.1.apk
 ```
 
 ## Controller workflow
@@ -180,7 +191,7 @@ adb install -r FLX4-Pocket-0.6.0.apk
 | PLAY / PAUSE | Play / pause; on an empty deck, open the library for it |
 | CUE | CDJ cue: set, preview while held, back to cue when playing |
 | SHIFT + CUE | Back to the start of the track |
-| BEAT SYNC / long press | Sync to the other deck (tempo and beat, as in rekordbox), or release keeping the tempo / make this deck the master |
+| BEAT SYNC / long press | Sync to the other deck's tempo (pressed while both decks play, also onto its beat; then the deck plays from where you put it), or release keeping the tempo / make this deck the master |
 | SHIFT + BEAT SYNC | Cycle the tempo range |
 | Tempo fader | Pitch, 14-bit, across the selected range. Ignored while the deck is synced. Soft takeover: after a sync, a touch change or a reconnection it takes over once it reaches the playing speed; until then an arrow next to the pitch shows which way to move it |
 | Jog top (touch) / side | Scratch / pitch bend |

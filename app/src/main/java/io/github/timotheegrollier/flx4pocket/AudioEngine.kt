@@ -48,8 +48,19 @@ class AudioEngine(context: Context) {
     var fxTarget: Int = FX_MASTER
     @Volatile
     var crossfader: Float = 0.5f
+    /**
+     * Master and headphones each in mono over two channels: left master, right headphones.
+     * What the FLX4 takes with its rear Android MONO/STEREO switch on MONO, the way round many
+     * phones (the Pixel 9 family among them) that only deliver the first two USB channels and
+     * leave the headphones silent; or a splitter cable on a phone's own jack. The output reopens.
+     */
     @Volatile
     var splitCue: Boolean = false
+        set(split) {
+            if (field == split) return
+            field = split
+            if (running) selectOutput(device)
+        }
     @Volatile
     var masterGain: Float = 0.8f
     @Volatile
@@ -148,7 +159,10 @@ class AudioEngine(context: Context) {
         emptyList()
     }
 
-    /** Peak level of a deck after its fader, for the channel meters. */
+    /** A meter reading: up to a new peak at once, else down by [factor]; flushed to 0 before floats get denormal and slow. */
+    private fun fall(peak: Float, shown: Float, factor: Float): Float = max(peak, shown * factor).let { if (it < 1e-6f) 0f else it }
+
+    /** Peak level of a deck before its fader (after trim, EQ and filter), for the channel meters. */
     fun level(deck: Int): Float = levels[deck]
 
     fun setMasterDeck(index: Int) {
@@ -160,7 +174,7 @@ class AudioEngine(context: Context) {
     @Synchronized
     fun selectOutput(target: AudioDeviceInfo?) {
         stopOutput()
-        val quad = target != null && hasFourChannels(target)
+        val quad = target != null && hasFourChannels(target) && !splitCue
         try {
             val out = try {
                 openTrack(if (quad) 4 else 2, target)
@@ -310,6 +324,8 @@ class AudioEngine(context: Context) {
         val deckB = decks[1]
         val rate = out.sampleRate
         val limiter = Limiter(rate)
+        // Meters jump to a peak at once and fall back at METER_FALL_DB dB a second.
+        val meterFall = Math.pow(10.0, -METER_FALL_DB * BLOCK / rate / 20.0).toFloat()
         var lastGainA = 0f
         var lastGainB = 0f
 
@@ -346,22 +362,23 @@ class AudioEngine(context: Context) {
             var peakA = 0f
             var peakB = 0f
             for (i in 0 until BLOCK) {
-                // The cue bus is tapped before the faders, like a hardware mixer.
+                // The cue bus and the channel meters are tapped before the faders, like the
+                // FLX4's own: a deck closed on the crossfader still shows, and cues, its level.
                 cueL[i] = aL[i] * pflA + bL[i] * pflB
                 cueR[i] = aR[i] * pflA + bR[i] * pflB
+                peakA = max(peakA, max(abs(aL[i]), abs(aR[i])))
+                peakB = max(peakB, max(abs(bL[i]), abs(bR[i])))
                 val gA = lastGainA + stepA * (i + 1)
                 val gB = lastGainB + stepB * (i + 1)
                 aL[i] *= gA
                 aR[i] *= gA
                 bL[i] *= gB
                 bR[i] *= gB
-                peakA = max(peakA, abs(aL[i]))
-                peakB = max(peakB, abs(bL[i]))
             }
             lastGainA = gainA
             lastGainB = gainB
-            levels[0] = max(peakA, levels[0] * 0.9f)
-            levels[1] = max(peakB, levels[1] * 0.9f)
+            levels[0] = fall(peakA, levels[0], meterFall)
+            levels[1] = fall(peakB, levels[1], meterFall)
 
             // Beat FX sit after the faders so an echo keeps ringing when a fader closes.
             val target = fxTarget
@@ -390,8 +407,9 @@ class AudioEngine(context: Context) {
                 val g = limiter.gainFor(max(abs(l), abs(r)))
                 val left = l * g
                 val right = r * g
-                peakL = max(peakL, abs(left))
-                peakR = max(peakR, abs(right))
+                // Read before the limiter, so red shows that it is at work: the master is too hot.
+                peakL = max(peakL, abs(l))
+                peakR = max(peakR, abs(r))
                 if (tape != null) {
                     tape[i * 2] = left
                     tape[i * 2 + 1] = right
@@ -414,8 +432,8 @@ class AudioEngine(context: Context) {
                     output[o + 3] = MixerMath.softClip(phonesR)
                 }
             }
-            meterL = max(peakL, meterL * 0.9f)
-            meterR = max(peakR, meterR * 0.9f)
+            meterL = fall(peakL, meterL, meterFall)
+            meterR = fall(peakR, meterR, meterFall)
             if (tape != null) recorder?.put(tape)
 
             val written = try {
@@ -446,6 +464,12 @@ class AudioEngine(context: Context) {
         const val FX_DECK_B = 1
         const val FX_MASTER = 2
         private const val BLOCK = 256
+
+        /**
+         * How fast the meters fall after a peak. It used to be about 160 dB/s: between two
+         * updates of the FLX4's LEDs (50 ms) a peak had already dropped 8 dB.
+         */
+        private const val METER_FALL_DB = 24.0
 
         /** Rates the engine runs at: what phones and USB sound cards mix at. */
         private val RATES = listOf(48000, 44100)

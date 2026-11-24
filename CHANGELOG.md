@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.1
+
+SYNC leaves the start to the DJ, the level meters read as on the FLX4, and the
+FLX4's headphones work on phones that only send it two channels.
+
+### Changed
+
+- SYNC no longer moves a deck by itself. A synced deck that is started, cued
+  or jumped (PLAY, CUE, hot cue, memory cue, search, beat jump) plays from
+  where it was put; sync keeps the master's tempo and holds that place against
+  the beat, also when TAP or the analysis changes either deck's grid. Only
+  SYNC pressed while both decks play lands it on the master's beat. (0.6.0
+  moved a synced deck onto the master's beat at every start and jump.)
+- Channel level meters, on screen and on the FLX4, read before the channel
+  fader and the crossfader, as the FLX4's own indicators do: a deck closed on
+  the crossfader still shows its level while it is cued. They read both
+  channels (only the left was read).
+- Meters in decibels, falling at 24 dB a second (it was about 160: between
+  two updates of the FLX4's LEDs a peak had already dropped 8 dB, so TRIM had
+  to be pushed). On the FLX4 the five LEDs light from -24, -12, -6, -3 and
+  0 dBFS, after Pioneer's MIDI message list: a track at TRIM centre lights
+  orange on its loudest parts, as the manual asks. On screen, 3 dB a segment,
+  amber from -6 dBFS, red at 0.
+- The master meter reads before the limiter: red shows it at work.
+- **Headphones over 2 channels** (AUDIO, formerly Split cue) now takes over a
+  four-channel output and reopens it at once (it was ignored on the FLX4).
+  With the FLX4's rear Android MONO/STEREO switch on MONO, master and
+  headphones come out each in mono, over the two channels that phones such as
+  the Pixel 9 family deliver; they leave the four-channel headphones silent
+  (a known Android bug). It starts unticked: the Split cue box of earlier
+  versions, which did nothing on the FLX4 and may have been left ticked, is
+  not carried over, or it would now send the cue to a speaker.
+
+### Fixed
+
+- Meters falling towards zero went through denormal floats, slow on some
+  processors.
+
 ## 0.6.0
 
 Sync and loops as rekordbox plays them, a beat grid that holds for a whole

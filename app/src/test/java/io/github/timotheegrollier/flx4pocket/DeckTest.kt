@@ -557,23 +557,45 @@ class DeckTest {
     }
 
     @Test
-    fun `a synced deck lands on the master's beat when it starts and when it jumps`() {
+    fun `a synced deck starts where the DJ starts it and keeps that place in the beat`() {
         val master = master(126.0, anchor = 0.1)
         master.togglePlay()
         play(1.0, target = master)
-        assertTrue(deck.engageSync(master))
-        assertEquals("a paused deck stays on its cue point", 0.0, deck.positionSec, 0.0)
+        deck.seekTo(4.0)
+        assertTrue(deck.engageSync(master)) // pressed on a paused deck: the tempo only
+        assertEquals("a paused deck stays on its cue point", 4.0, deck.positionSec, 0.0)
 
         play(0.33, target = master)
         deck.togglePlay() // PLAY anywhere in the beat
         together(0.01, master)
-        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
-        assertTrue("moved by less than half a beat, and not before the start", deck.positionSec in 0.0..0.3)
+        assertEquals("it plays on from the cue point, not moved onto the master's beat", 4.0 + 256.0 / 44100.0 * 1.05, deck.positionSec, 1e-4)
+        val started = BeatGrid.phaseError(master.phase(), deck.phase())
+        assertTrue("the test starts it off the master's beat", abs(started) > 0.05)
+        together(10.0, master)
+        assertEquals("sync keeps the tempo, and that place against the beat", started, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+        assertEquals(126.0, deck.effectiveBpm(), 1e-6)
 
-        deck.seekTo(7.3) // needle search, hot cue, memory cue
+        deck.seekTo(17.3) // needle search, hot cue, memory cue: played from there, no correction
         together(0.01, master)
-        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
-        assertEquals(7.3, deck.positionSec, 0.26)
+        assertEquals(17.3 + 256.0 / 44100.0 * 1.05, deck.positionSec, 1e-3)
+        val jumped = BeatGrid.phaseError(master.phase(), deck.phase())
+        together(5.0, master)
+        assertEquals(jumped, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+    }
+
+    @Test
+    fun `a new grid on either deck does not make sync slide a synced deck`() {
+        val master = master(126.0)
+        master.togglePlay()
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        together(1.0, master) // on the master's beat
+        fun heardGap() = master.positionSec - deck.positionSec / 1.05 // constant while the deck runs 1.05 times as fast
+        val before = heardGap()
+        deck.setGrid(120.0, 0.25, 2.0) // TAP moved this deck's grid half a beat
+        master.setGrid(126.0, 0.1, 2.0) // and the analysis refined the master's
+        together(20.0, master)
+        assertEquals("the audio stays where it was against the master", before, heardGap(), 0.002)
     }
 
     @Test
@@ -684,9 +706,9 @@ class DeckTest {
         val master = master(174.0)
         master.togglePlay()
         deck.togglePlay()
+        deck.seekTo(3.37) // off the master's beat when SYNC is pressed
         assertTrue(deck.engageSync(master))
         assertEquals("87 BPM is 174 BPM: not twice the speed", 87.0, deck.effectiveBpm(), 1e-6)
-        deck.seekTo(3.37)
         together(1.0, master)
         assertEquals(87.0, deck.effectiveBpm(), 1e-3)
         assertEquals("every beat of the slower deck falls on a beat of the master", 0.0, BeatGrid.phaseError(master.phase(), deck.phase() * 2), 1e-6)

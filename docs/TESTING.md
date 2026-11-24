@@ -12,7 +12,7 @@ All tests run on the JVM; no device or emulator is needed.
 | Test class | Covers |
 | --- | --- |
 | `Flx4DecoderTest` | The FLX4 address table: every mapped button, knob, jog mode and pad range, running status, 14-bit pairs per deck, relative encoders, repeated positions reported once |
-| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, loops that keep the beat (late OUT, early 4 BEAT, 1/4-beat loops, halving under the playhead), the loop length reported exactly on any grid, a loop asked for before the first beat, a jump past a loop leaving it, click-free loop seams (also with KEY, which must restart at the loop start at once), loop point adjust with the jog, memory cues (a call waits on the cue), instant doubles, hot cues (with quantize they keep the place in the beat), beat jump (during a loop it moves the loop), slip roll, pad FX, scratch, bend, sync (tempo and beat, landing on the beat at PLAY and after a jump, a nudge kept, half and double tempo, SYNC off keeping the tempo, the master's tempo moving), TAP correcting a grid, keylock pitch and tempo, time and pitch at a 48 kHz output, click-free jumps, Smart CFX |
+| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, loops that keep the beat (late OUT, early 4 BEAT, 1/4-beat loops, halving under the playhead), the loop length reported exactly on any grid, a loop asked for before the first beat, a jump past a loop leaving it, click-free loop seams (also with KEY, which must restart at the loop start at once), loop point adjust with the jog, memory cues (a call waits on the cue), instant doubles, hot cues (with quantize they keep the place in the beat), beat jump (during a loop it moves the loop), slip roll, pad FX, scratch, bend, sync (the tempo; the beat when SYNC is pressed on a playing deck; a deck started or jumped plays from there and keeps that place in the beat, also when either grid changes; a nudge kept, half and double tempo, SYNC off keeping the tempo, the master's tempo moving), TAP correcting a grid, keylock pitch and tempo, time and pitch at a 48 kHz output, click-free jumps, Smart CFX |
 | `BpmAnalyzerTest`, `BeatGridTest` | The beat grid to a hundredth of a BPM: click tracks, a non-integer tempo over five minutes, 174 not read as 87, a silent intro, and a synthesised kick and hat track through the real PCM path whose grid must still sit on its kicks after five minutes; beat math |
 | `RecorderTest` | The WAV header and the 24-bit samples read back, a recording continuing in a second file at the size limit, a write error stopping it with its reason |
 | `TrackBufferTest` | Whole-track buffer: decoded frames read back, undecoded ones wait, capacity |
@@ -20,8 +20,8 @@ All tests run on the JVM; no device or emulator is needed.
 | `LibraryTest` | Folder column order (parents before children, lookalike names apart), counts, which tracks a folder holds |
 | `WaveformTest` | Resolution, band separation, overflow, cache-file round trip |
 | `PcmRingTest` | Interpolation accuracy at 5 and 15 kHz, whole frames read sample for sample, seek reset, eviction over many capacities, decoder throttling |
-| `DspTest` | Biquads, mixer curves, EQ range, master limiter, soft clip |
-| `MainActivityTest` (Robolectric) | The real layouts inflate, the activity runs its lifecycle, touch controls and controller events reach the engine, an empty deck opens the library for itself, waveforms cannot grab a track while the library is open, panels fold away (the library still opens, the choice is remembered), the screen restacking when held upright on the same activity and engine and coming back, the padding for a camera cutout and rounded corners, the tempo column of the track list, REC, the playing deck taking the sync master role, tempo fader soft takeover, load lock, KEY, the controller browsing folders then tracks, playlists (order, kept across launches), BPM sort, resizing the waveforms by dragging |
+| `DspTest` | Biquads, mixer curves, EQ range, master limiter, soft clip, meters in decibels, the FLX4 level LED bands (-24 / -12 / -6 / -3 / 0 dBFS) |
+| `MainActivityTest` (Robolectric) | The real layouts inflate, the activity runs its lifecycle, touch controls and controller events reach the engine, an empty deck opens the library for itself, waveforms cannot grab a track while the library is open, panels fold away (the library still opens, the choice is remembered), the screen restacking when held upright on the same activity and engine and coming back, the padding for a camera cutout and rounded corners, the tempo column of the track list, REC, a channel meter reading before the fader and the crossfader, the playing deck taking the sync master role, tempo fader soft takeover, load lock, KEY, the controller browsing folders then tracks, playlists (order, kept across launches), BPM sort, resizing the waveforms by dragging |
 
 `MainActivityTest` also writes pictures of the real screen to
 `app/build/screenshots/`: `main.png` (the mixing screen with two synthetic
@@ -32,7 +32,7 @@ changing a layout.
 ## What the tests cannot show
 
 Robolectric stubs `AudioTrack`, `MediaCodec`, `MidiManager` and the media
-store. 0.3.0 was used on a Pixel 9a with a DDJ-FLX4; 0.4.0 to 0.6.0 have not
+store. 0.3.0 was used on a Pixel 9a with a DDJ-FLX4; 0.4.0 to 0.6.1 have not
 been checked on hardware by the author. Please check on a phone, and with a
 DDJ-FLX4 where marked, and report what differs.
 
@@ -77,9 +77,12 @@ Beat grid and sync (two tracks you know, played for several minutes)
     included; the beat marks sit on the kicks at the start and at the end of
     the track. A track loaded with an earlier version shows its old grid for
     a moment, then the new one.
-14. SYNC on a paused deck, then PLAY anywhere in the beat: it starts on the
-    master's beat. A hot cue or a needle search on the synced deck keeps the
-    beat. The two decks still sound as one after three minutes.
+14. SYNC on a paused deck, then PLAY anywhere: it starts exactly where it
+    was cued, at the master's tempo, and stays at that place against the
+    beat. SYNC pressed while both play puts it on the beat at once. A hot
+    cue or a needle search on the synced deck plays from there, without a
+    correction. Two decks put on the beat still sound as one after three
+    minutes.
 15. A jog nudge on the synced deck stays where you put it. SYNC off, or SYNC
     on the other deck, changes no tempo. With SYNC on, the FLX4 tempo fader
     does nothing; after SYNC off the arrow by the pitch shows where to move it.
@@ -121,9 +124,17 @@ Controller (FLX4)
 USB audio
 
 30. With the FLX4 connected, the status line shows its name. Note whether it
-    says `master 1-2 + phones 3-4` or `stereo`.
+    says `master 1-2 + phones 3-4`, `stereo` or `split cue`.
 31. In four-channel mode: master on the MASTER outputs, cue on PHONES, mix and
-    level knobs working.
+    level knobs working. If the headphones stay silent: unplug, set the
+    FLX4's rear Android MONO/STEREO switch to MONO, replug, tick Headphones
+    over 2 channels in AUDIO. Then deck 2's fader down and its CUE on: deck 2
+    is heard in the headphones only, never on the speakers (if it is, untick
+    at once and report it). Note whether the FLX4 entry of the AUDIO list says
+    "USB, stereo" or "USB, master + headphones" with the switch on MONO.
+31b. Channel level meters: a track at TRIM centre lights orange (FLX4) and
+    amber (screen) on its loudest parts, red only when pushed; a deck with its
+    fader down or closed on the crossfader still shows its level.
 32. Unplugging the controller pauses both decks.
 33. A notification sound does not lower the master.
 

@@ -3,6 +3,7 @@ package io.github.timotheegrollier.flx4pocket
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.log10
 import kotlin.math.sin
 import kotlin.math.tanh
 
@@ -38,6 +39,31 @@ object MixerMath {
         val g = knob.coerceIn(0f, 1f) * 2f
         return g * g
     }
+
+    /**
+     * Where a peak (linear, 1 = full scale) sits on a meter that shows [floorDb] to [topDb]
+     * dBFS: 0 at or below the floor, 1 at or above the top, evenly in decibels in between.
+     */
+    fun meterPosition(peak: Float, floorDb: Float, topDb: Float): Float {
+        if (!(peak > 0f)) return 0f
+        val db = 20f * log10(peak)
+        return ((db - floorDb) / (topDb - floorDb)).coerceIn(0f, 1f)
+    }
+
+    /**
+     * The FLX4 channel level LEDs for a peak: from the bottom, 2 green, 2 orange, 1 red, lit
+     * from -24, -12, -6, -3 and 0 dBFS (the screen meter's segments 4, 8, 10, 11 and 12). The
+     * values are the middles of the bands in Pioneer's MIDI message list (38, 65, 87, 101 and
+     * 119 light 1 to 5 LEDs). A well-trimmed track lights orange on its loudest parts.
+     */
+    fun ledLevel(peak: Float): Int {
+        if (!(peak > 0f)) return 0
+        val db = 20f * log10(peak)
+        return LED_VALUES[LED_DB.count { db >= it }]
+    }
+
+    private val LED_DB = floatArrayOf(-24f, -12f, -6f, -3f, 0f)
+    private val LED_VALUES = intArrayOf(0, 0x33, 0x4C, 0x5E, 0x6E, 0x7F)
 
     fun filterAmount(knob: Float): Float = (knob.coerceIn(0f, 1f) - 0.5f) * 2f
 

@@ -1319,7 +1319,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         slider("Headphones level", engine.headphoneGain) { engine.headphoneGain = it }
         slider("Headphones mix: CUE ◄ ► MASTER", engine.headphoneMix) { engine.headphoneMix = it }
         content.addView(CheckBox(this).apply {
-            text = "Split cue on a stereo output (master left, headphones right)"
+            text = "Headphones over 2 channels: master mono left, headphones mono right. " +
+                "With the FLX4: its rear switch on MONO (Android) first, when its headphones stay silent " +
+                "(the Pixel 9 family and other phones only send it 2 channels). Never with the switch on STEREO: " +
+                "the cue would play on the right speaker. Also for a splitter cable on the phone's jack."
             isChecked = engine.splitCue
             setOnCheckedChangeListener { _, checked ->
                 engine.splitCue = checked
@@ -1361,7 +1364,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         const val PREF_FILES = "files"
         const val PREF_PLAYLISTS = "playlists"
         const val PREF_WAVE_SHARE = "wave_share"
-        const val PREF_SPLIT = "split_cue"
+        const val PREF_SPLIT = "phones_over_2" // not "split_cue": up to 0.6.0 that box did nothing on the FLX4 and may be left ticked
         const val PREF_ZOOM = "zoom"
         val PANEL_PREFS = arrayOf("panel_deck_a", "panel_mixer", "panel_deck_b")
 

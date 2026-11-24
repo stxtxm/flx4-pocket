@@ -66,9 +66,11 @@ Per block:
    the block starts.
 1. `Deck.render()` produces each deck post-trim, EQ, filter and pad FX, but
    pre-fader.
-2. The **cue bus** is tapped (decks whose CUE button is on), then the channel
-   faders and the equal-power crossfader are applied in place, ramped across
-   the block so fast moves and cuts do not click.
+2. The **cue bus** (decks whose CUE button is on) and the **channel meters**
+   are tapped there, before the faders, as on the FLX4: a deck closed on its
+   fader or the crossfader still shows its level and can be cued. Then the
+   channel faders and the equal-power crossfader are applied in place, ramped
+   across the block so fast moves and cuts do not click.
 3. **Beat FX** process deck A, deck B or the summed master. They sit after the
    faders so an echo keeps ringing when a fader closes.
 4. The master passes a stereo-linked peak limiter (`Limiter`): the gain drops
@@ -79,6 +81,20 @@ Per block:
 6. While REC is on, the master output of the block (after the master level and
    the limiter: what is sent out) is copied into a pooled block for the
    `Recorder`.
+
+**Meters.** Each meter reads the block's sample peak (both channels), jumps
+to a new peak at once and falls back at 24 dB a second: between two updates
+of the FLX4's LEDs (every 50 ms) a peak loses 1.2 dB. The channel meters read
+before the faders, the master meter before the limiter, so its red segment
+shows the limiter at work. On screen, 12 segments of 3 dB from -36 dBFS,
+amber from -6, red at 0. On the FLX4, `MixerMath.ledLevel` turns the peak
+into a value inside one of Pioneer's documented bands (its middle, 127 for
+the red one), so its five LEDs light
+from -24, -12, -6, -3 and 0 dBFS, the screen's segments 4, 8, 10, 11 and 12.
+
+**Headphones over 2 channels** (`splitCue`) wins over a four-channel output
+and reopens it: master mono on the left, headphones mono on the right, the
+layout the FLX4 takes with its rear switch on MONO.
 
 A fault in the mix loop stops the sound, not the app: the status line says so
 and AUDIO restarts the output.
@@ -101,8 +117,8 @@ Output layouts:
 | Layout | Channels | When |
 | --- | --- | --- |
 | Stereo | master L/R | default |
-| Split cue | master mono / headphones mono | user option on a stereo output |
-| Four channels | master on 1-2, headphones on 3-4 | the selected device reports four or more channels |
+| Headphones over 2 channels (`splitCue`) | master mono left, headphones mono right | user option (AUDIO), on any output, four-channel ones included |
+| Four channels | master on 1-2, headphones on 3-4 | the selected device reports four or more channels and Headphones over 2 channels is off |
 
 `AudioEngine` registers an `AudioDeviceCallback`: a USB audio sink that appears
 is selected automatically; if the current output disappears, both decks are
@@ -160,15 +176,16 @@ the same reason.
   fine), crossfaded over 12 ms. Scratching bypasses it.
 - **Jumps** (hot cues, loops, seeks) crossfade from the old position over
   3 ms instead of cutting; with keylock the next grain starts at the target.
-- **Sync**, as rekordbox plays BEAT SYNC: the follower's factor is
-  `masterBpm / ownBpm`, folded to the nearer of half, same and double speed
-  (87 against 174 BPM is one tempo) and recomputed every block so it follows
-  the master's tempo. Whenever the follower starts or jumps (PLAY, hot cue,
-  memory cue, search), its next block lands on the master's beat, crossfaded
-  like any jump; a paused deck stays on its cue point. In between, a
-  correction of at most ±0.4 % holds the beats together. A jog nudge, a bend
-  button or a scratch is kept: the offset it leaves becomes the target. SYNC
-  off folds the factor into the deck's own tempo, so nothing jumps, and
+- **Sync**: the follower's factor is `masterBpm / ownBpm`, folded to the
+  nearer of half, same and double speed (87 against 174 BPM is one tempo) and
+  recomputed every block so it follows the master's tempo. SYNC pressed while
+  both decks play also lands the follower on the master's beat in its next
+  block, crossfaded like any jump. Otherwise sync never moves the deck: when
+  the DJ starts it (PLAY), cues it or jumps (hot cue, memory cue, search,
+  beat jump), the place against the master's beat it lands on, like a jog
+  nudge, a bend button or a scratch, becomes the target; a correction of at
+  most ±0.4 % then holds it there. SYNC off folds the factor into the deck's
+  own tempo, so nothing jumps, and
   `tempoPosition` is where a fader must sit for that speed: the FLX4 tempo
   fader, ignored while synced, takes over there (soft takeover).
 - **Loops**: manual in/out (quantized to the grid when Q is on), beat loops,

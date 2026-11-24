@@ -79,6 +79,32 @@ class DspTest {
     }
 
     @Test
+    fun `meters read in decibels`() {
+        assertEquals(1f, MixerMath.meterPosition(1f, -36f, 0f), 1e-6f)
+        assertEquals("-6 dBFS", (36f - 6.0206f) / 36f, MixerMath.meterPosition(0.5f, -36f, 0f), 1e-4f)
+        assertEquals("over full scale stays at the top", 1f, MixerMath.meterPosition(2f, -36f, 0f), 0f)
+        assertEquals("below the floor", 0f, MixerMath.meterPosition(0.001f, -36f, 0f), 0f)
+        assertEquals("silence", 0f, MixerMath.meterPosition(0f, -36f, 0f), 0f)
+        assertEquals("NaN", 0f, MixerMath.meterPosition(Float.NaN, -36f, 0f), 0f)
+    }
+
+    @Test
+    fun `FLX4 level LEDs light at -24, -12, -6, -3 and 0 dBFS`() {
+        fun at(db: Double) = MixerMath.ledLevel(Math.pow(10.0, db / 20.0).toFloat())
+        // Pioneer's bands: 38-64 one LED, 65-86 two, 87-100 three, 101-118 four, 119-127 five (red).
+        fun leds(value: Int) = listOf(38, 65, 87, 101, 119).count { value >= it }
+        val expected = mapOf(
+            0.1 to 5, -0.1 to 4, -1.0 to 4, -2.9 to 4, -3.1 to 3, -5.9 to 3, -6.1 to 2,
+            -10.0 to 2, -11.9 to 2, -12.1 to 1, -15.0 to 1, -23.9 to 1, -24.1 to 0, -30.0 to 0
+        )
+        for ((db, lit) in expected) assertEquals("$db dBFS", lit, leds(at(db)))
+        assertEquals("a normal master's loudest parts: orange", 4, leds(at(-1.0)))
+        assertEquals("over full scale", 127, MixerMath.ledLevel(2f))
+        assertEquals("silence", 0, MixerMath.ledLevel(0f))
+        assertEquals("NaN", 0, MixerMath.ledLevel(Float.NaN))
+    }
+
+    @Test
     fun `soft clip is transparent below the knee and never exceeds full scale`() {
         assertEquals(0.5f, MixerMath.softClip(0.5f), 0f)
         assertEquals(-0.8f, MixerMath.softClip(-0.8f), 0f)

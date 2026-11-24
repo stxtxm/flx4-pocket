@@ -15,7 +15,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 /** Sets the text only when it changed, so per-frame refreshes cost nothing. */
 fun TextView.show(value: CharSequence) {
@@ -228,9 +227,12 @@ class VuView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = 
     private val paint = Paint()
     private var lit = 0
 
+    /**
+     * 3 dB a segment, from -36 dBFS: the two amber segments light from -6 and -3 dBFS, the
+     * loudest parts of a well-trimmed track; red means 0 dBFS, the deck is clipping.
+     */
     fun setLevel(peak: Float) {
-        // Square root spreads the useful range: -12 dB lands mid-scale.
-        val segments = (sqrt(peak.coerceIn(0f, 1f)) * SEGMENTS + 0.5f).toInt()
+        val segments = (MixerMath.meterPosition(peak, -36f, 0f) * SEGMENTS).toInt()
         if (segments != lit) {
             lit = segments
             invalidate()

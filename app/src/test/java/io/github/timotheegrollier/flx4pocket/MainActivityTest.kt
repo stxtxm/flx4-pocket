@@ -165,6 +165,31 @@ class MainActivityTest {
     }
 
     @Test
+    fun `a channel meter reads before the fader and the crossfader, as on the FLX4`() {
+        val activity = launch().get()
+        val engine = activity.engine
+        engine.decks[1].load(object : PcmSource { // a tone at half of full scale, -6 dBFS
+            override val sampleRate = 44100
+            override val durationSec = 3600.0 // the mixer runs faster than real time in these tests
+            override fun sampleFrame(frame: Double, out: FloatArray): Boolean {
+                val v = (0.5 * Math.sin(frame * 0.05)).toFloat()
+                out[0] = v
+                out[1] = v
+                return true
+            }
+            override fun hasFrame(frame: Double) = true
+            override fun seek(seconds: Double) {}
+            override fun close() {}
+        }, "Tone", "", 0.0)
+        engine.decks[1].volume = 0f // its fader down
+        engine.crossfader = 0f // and the crossfader on deck A: nothing of deck B reaches the master
+        Thread.sleep(100) // the faders glide to their new place over one block: let them get there first
+        engine.decks[1].togglePlay()
+        eventually("deck B's meter still shows its level") { engine.level(1) > 0.45f }
+        assertTrue("and nothing of it in the master: ${engine.meterL}", engine.meterL < 0.01f)
+    }
+
+    @Test
     fun `REC records until it is pressed again`() {
         val activity = launch().get()
         val rec = activity.findViewById<TextView>(R.id.btn_rec)
