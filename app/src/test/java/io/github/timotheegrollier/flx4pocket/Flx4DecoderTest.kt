@@ -48,13 +48,14 @@ class Flx4DecoderTest {
         assertEquals(listOf("button 0 PLAY true"), send(0x90, 0x0B, 0x7F))
         assertEquals(listOf("button 0 PLAY false"), send(0x90, 0x0B, 0x00))
         assertEquals(listOf("button 1 CUE true"), send(0x91, 0x0C, 0x7F))
+        assertEquals(listOf("button 0 SHIFT true"), send(0x90, 0x3F, 0x7F))
         assertEquals(listOf("button 1 CUE false"), send(0x81, 0x0C, 0x40))
         assertEquals(listOf("button 0 TO_START true"), send(0x90, 0x48, 0x7F))
         assertEquals(listOf("button 1 SYNC true"), send(0x91, 0x58, 0x7F))
         assertEquals(listOf("button 1 MASTER true"), send(0x91, 0x5C, 0x7F))
         assertEquals(listOf("button 0 TEMPO_RANGE true"), send(0x90, 0x60, 0x7F))
         assertEquals(listOf("button 0 PFL true"), send(0x90, 0x54, 0x7F))
-        assertEquals(listOf("button 0 QUANTIZE true"), send(0x90, 0x68, 0x7F))
+        assertEquals(listOf("button 0 TAP true"), send(0x90, 0x68, 0x7F))
     }
 
     @Test
@@ -110,6 +111,8 @@ class Flx4DecoderTest {
             listOf("knob 0 EQ_HIGH 0.500", "knob 0 EQ_HIGH 0.504"),
             send(0xB0, 0x07, 0x40, 0x27, 0x40)
         )
+        assertEquals(listOf("knob 0 EQ_MID 0.500"), send(0xB0, 0x0B, 0x40))
+        assertEquals(listOf("knob 0 EQ_LOW 0.500"), send(0xB0, 0x0F, 0x40))
     }
 
     @Test
@@ -161,6 +164,7 @@ class Flx4DecoderTest {
     @Test
     fun `jog wheel`() {
         assertEquals(listOf("button 0 JOG_TOUCH true"), send(0x90, 0x36, 0x7F))
+        assertEquals("touched with SHIFT", listOf("button 1 JOG_TOUCH true"), send(0x91, 0x67, 0x7F))
         assertEquals(listOf("jog 0 SCRATCH 1"), send(0xB0, 0x22, 0x41))
         assertEquals(listOf("jog 0 SCRATCH -3"), send(0xB0, 0x22, 0x3D))
         assertEquals(listOf("jog 1 BEND -1"), send(0xB1, 0x21, 0x3F))

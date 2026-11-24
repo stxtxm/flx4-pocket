@@ -135,16 +135,26 @@ class Deck(val index: Int) {
     val padFx = FxUnit(SAMPLE_RATE)
     private val cfxEcho = FxUnit(SAMPLE_RATE).apply { beats = 0.75 }
 
+    /** Rate the deck renders at: that of the output, which the engine opens at the device's own rate. */
+    @Volatile
+    var outputRate: Int = SAMPLE_RATE
+        private set
+
     // State below is only touched while holding the deck lock.
     private var cursor = 0.0 // source frames
     private var tempoNormalized = 0.0
     private var jogBend = 0.0
     private var scratchPending = 0.0 // source frames still to travel
+    private var scratchRate = 0.0 // the platter's speed as followed so far, in source frames per block
     private var rolling = false
     private var rollStart = 0.0
     private var rollLength = 0.0
     private var slipCursor = 0.0
     private var cuePreview = false
+    private var syncOctave = 1.0 // 0.5 or 2.0 when the master's tempo is nearer double or half this deck's
+    private var syncGrids = Double.NaN // the grids' tempo ratio the octave was chosen for
+    private var syncOffset = 0.0 // beats the DJ nudged this deck off the master's beat: sync holds the tempo around it
+    private var syncSnap = false // started or jumped: a synced deck lands back on the master's beat in its next block
     private var misses = 0
     private val sample = FloatArray(2)
 
@@ -172,6 +182,19 @@ class Deck(val index: Int) {
     private var lastFilter = Float.NaN
     private var lastSmart = false
     private var filterBypass = true
+
+    /** Called by the engine, with the output stopped, when the output's rate changes. */
+    @Synchronized
+    fun setOutputRate(rate: Int) {
+        outputRate = rate
+        padFx.sampleRate = rate
+        cfxEcho.sampleRate = rate
+        // Filter coefficients belong to a rate: have updateFilters work them out again.
+        lastLowDb = Double.NaN
+        lastMidDb = Double.NaN
+        lastHighDb = Double.NaN
+        lastFilter = Float.NaN
+    }
 
     // ------------------------------------------------------------------
     // Loading
@@ -224,6 +247,7 @@ class Deck(val index: Int) {
         rolling = false
         scratching = false
         scratchPending = 0.0
+        scratchRate = 0.0
         cuePreview = false
         heldFxPad = -1
         padFx.enabled = false
@@ -346,6 +370,7 @@ class Deck(val index: Int) {
         if (source == null || adjusting) return
         scratching = true
         scratchPending = 0.0
+        scratchRate = 0.0
     }
 
     /** Moves the "record" by [seconds] of track time; the audio follows within a few ms. */
@@ -365,6 +390,7 @@ class Deck(val index: Int) {
     fun scratchEnd() {
         scratching = false
         scratchPending = 0.0
+        scratchRate = 0.0
     }
 
     // ------------------------------------------------------------------
@@ -375,6 +401,23 @@ class Deck(val index: Int) {
     fun setGrid(bpm: Double, anchorSec: Double, confidence: Double) {
         grid = BeatGrid(bpm = bpm.coerceIn(0.0, 300.0), anchorSec = anchorSec)
         gridConfidence = confidence
+    }
+
+    /**
+     * TAP: the DJ taps the beat, the last tap now. The analysed tempo is far finer than a
+     * finger, so when the taps agree with it (or with its half or double) it is kept, and the
+     * grid only moves by half a beat if the taps fall between its beats. Otherwise the
+     * analysis was wrong and the grid is rebuilt from the taps.
+     */
+    @Synchronized
+    fun tapGrid(tappedBpm: Double, latencySec: Double = 0.0) {
+        val heard = positionSec - latencySec * speed // the taps follow the speaker, which lags the mixer
+        val known = doubleArrayOf(1.0, 2.0, 0.5).map { grid.bpm * it }
+            .firstOrNull { grid.valid && abs(it / tappedBpm - 1.0) < 0.04 }
+            ?: return setGrid(tappedBpm, heard, 2.0)
+        val beat = 60.0 / known
+        val into = BeatGrid(known, grid.anchorSec).phase(heard)
+        setGrid(known, if (into >= 0.25 && into < 0.75) grid.anchorSec + beat / 2.0 else grid.anchorSec, gridConfidence)
     }
 
     fun phase(): Double = if (grid.valid) grid.phase(positionSec) else 0.0
@@ -392,30 +435,68 @@ class Deck(val index: Int) {
     private fun snap(seconds: Double): Double {
         if (!quantize || !grid.valid) return seconds
         val beat = grid.secondsPerBeat()
-        return grid.anchorSec + ((seconds - grid.anchorSec) / beat).roundToLong() * beat
+        val snapped = grid.anchorSec + ((seconds - grid.anchorSec) / beat).roundToLong() * beat
+        return if (snapped < 0.0) snapped + beat else snapped // in a lead-in: the first beat, not a time before the track
     }
 
+    /**
+     * BEAT SYNC, as rekordbox plays it: this deck takes [master]'s tempo and, while it
+     * plays, lands on its beats (at once when it starts or jumps, see [render]). A paused
+     * deck stays on its cue point.
+     */
     @Synchronized
     fun engageSync(master: Deck): Boolean {
         if (!grid.valid || !master.grid.valid || source == null) return false
-        val targetBpm = master.effectiveBpm()
-        val baseBpm = grid.bpm * tempoRate
-        if (targetBpm <= 0.0 || baseBpm <= 0.0) return false
-        syncFactor = (targetBpm / baseBpm).coerceIn(0.5, 2.0)
+        syncGrids = Double.NaN // choose the octave again
+        followTempo(master)
         syncEnabled = true
-        if (master.playing) {
-            val errorBeats = BeatGrid.phaseError(master.phase(), phase())
-            seekToInternal(positionSec + errorBeats * grid.secondsPerBeat())
-        }
+        syncOffset = 0.0
+        jogBend = 0.0 // a push just before SYNC must not be kept as a nudge
+        syncSnap = true
         return true
     }
 
+    /**
+     * Takes [master]'s tempo. 87 against 174 BPM is the same tempo: the nearer of half, same and
+     * double speed, chosen at SYNC or when a grid changes, never because the master's fader moved.
+     */
+    private fun followTempo(master: Deck) {
+        val ratio = master.effectiveBpm() / (grid.bpm * tempoRate)
+        val grids = master.grid.bpm / grid.bpm
+        if (grids != syncGrids) {
+            syncGrids = grids
+            syncOctave = if (ratio > 1.42) 0.5 else if (ratio < 0.705) 2.0 else 1.0
+        }
+        syncFactor = ratio * syncOctave
+    }
+
+    /**
+     * SYNC off: the deck keeps the tempo it plays at, and the tempo fader takes over from there.
+     * Beyond the fader's range the range widens, as rekordbox does, or the fader could never get there.
+     */
     @Synchronized
-    fun releaseSync() = releaseSyncInternal()
+    fun releaseSync() {
+        tempoRate *= syncFactor
+        tempoRange = TEMPO_RANGES.firstOrNull { it >= tempoRange - 1e-9 && it >= abs(tempoRate - 1.0) } ?: TEMPO_RANGES.last()
+        setTempoNormalized((tempoRate - 1.0) / tempoRange)
+    }
 
     private fun releaseSyncInternal() {
         syncEnabled = false
         syncFactor = 1.0
+    }
+
+    /** Beats this deck is behind [master]; at half or double tempo, on the beats both grids share. */
+    private fun beatError(master: Deck): Double {
+        val own = max(1.0 / syncOctave, 1.0)
+        return BeatGrid.phaseError(master.phase() * max(syncOctave, 1.0), phase() * own) / own
+    }
+
+    /** Seconds to move for this deck's beats to fall on [master]'s (the DJ's nudge kept); never before the track start. */
+    private fun beatShift(master: Deck): Double {
+        val beat = grid.secondsPerBeat()
+        val shift = BeatGrid.phaseError(beatError(master), syncOffset) * beat
+        return if (positionSec + shift < 0.0) shift + beat else shift
     }
 
     // ------------------------------------------------------------------
@@ -471,7 +552,8 @@ class Deck(val index: Int) {
         // Nearest, not last: pressed just before the beat, the loop starts on it.
         val step = min(length, beatSeconds())
         val start = if (grid.valid && quantize) {
-            grid.anchorSec + ((positionSec - grid.anchorSec) / step).roundToLong() * step
+            val nearest = grid.anchorSec + ((positionSec - grid.anchorSec) / step).roundToLong() * step
+            if (nearest < 0.0) nearest + step else nearest // before the track starts: the next step, so the loop keeps its length
         } else {
             positionSec
         }
@@ -480,7 +562,8 @@ class Deck(val index: Int) {
 
     /**
      * CUE/LOOP CALL ◁ ▷: during a loop, halves or doubles it; otherwise calls the
-     * previous or next memory cue: a point becomes the cue point, a loop plays.
+     * previous or next memory cue as rekordbox does: the deck waits on it, a point
+     * as the cue point, a loop ready to play.
      */
     @Synchronized
     fun cueLoopCall(direction: Int) {
@@ -493,6 +576,8 @@ class Deck(val index: Int) {
         } ?: return
         calledMemory = cue
         cuePointSec = cue.inSec
+        playing = false
+        cuePreview = false
         seekToInternal(cue.inSec)
         if (cue.isLoop) setLoop(cue.inSec, cue.outSec)
     }
@@ -543,8 +628,12 @@ class Deck(val index: Int) {
         setLoop(loopInSec, loopInSec + length)
     }
 
-    /** Length of the active loop in beats, 0 when no loop is active. */
-    fun loopBeats(): Double = if (loopActive) (loopOutSec - loopInSec) / beatSeconds() else 0.0
+    /** Length of the active loop in beats, 0 when no loop is active; a pad size comes back exact, so its pad can light. */
+    fun loopBeats(): Double {
+        if (!loopActive) return 0.0
+        val beats = (loopOutSec - loopInSec) / beatSeconds()
+        return LOOP_BEATS.firstOrNull { abs(beats - it) < it * 1e-6 } ?: beats
+    }
 
     /** Before the loop the deck plays into it; past its end it wraps now, at the same place in the beat. */
     private fun setLoop(start: Double, end: Double) {
@@ -552,7 +641,10 @@ class Deck(val index: Int) {
         loopOutSec = end
         loopActive = true
         val length = loopOutSec - loopInSec
-        if (positionSec >= loopOutSec && length > 0.0) seekToInternal(loopInSec + (positionSec - loopInSec) % length)
+        if (positionSec >= loopOutSec && length > 0.0) {
+            seekToInternal(loopInSec + (positionSec - loopInSec) % length)
+            syncSnap = false // the wrap keeps the place in the beat; a snap could leave a short loop
+        }
     }
 
     private val adjusting: Boolean get() = loopActive && loopAdjust != 0
@@ -561,6 +653,7 @@ class Deck(val index: Int) {
         loopAdjust = if (loopAdjust == point) 0 else point
         scratching = false // from now on the jog moves the loop point, not the record
         scratchPending = 0.0
+        scratchRate = 0.0
     }
 
     /** Moves the selected loop point by [seconds] (later when positive), never closer than [MIN_LOOP_SECONDS]. */
@@ -575,7 +668,15 @@ class Deck(val index: Int) {
 
     @Synchronized
     fun beatJump(beats: Double) {
-        if (source != null) seekToInternal(positionSec + beats * beatSeconds())
+        if (source == null) return
+        var shift = beats * beatSeconds()
+        if (loopActive) {
+            // rekordbox's loop move: during a loop, the loop jumps with the deck.
+            shift = max(shift, -loopInSec)
+            loopInSec += shift
+            loopOutSec += shift
+        }
+        seekToInternal(positionSec + shift)
     }
 
     // ------------------------------------------------------------------
@@ -601,6 +702,12 @@ class Deck(val index: Int) {
                 when {
                     shift -> hotCues = hotCues.copyOf().also { it[pad] = null }
                     existing == null -> hotCues = hotCues.copyOf().also { it[pad] = snap(positionSec) }
+                    // Quantize, as in rekordbox: a playing deck jumps at once but stays as far into its beat.
+                    quantize && playing && grid.valid -> {
+                        val beat = grid.secondsPerBeat()
+                        val target = existing + BeatGrid.phaseError(phase(), grid.phase(existing)) * beat
+                        seekToInternal(if (target < 0.0) target + beat else target)
+                    }
                     else -> seekToInternal(existing)
                 }
             }
@@ -631,9 +738,11 @@ class Deck(val index: Int) {
         heldFxPad = -1
         padFx.enabled = false
         if (rolling) {
-            // Slip: resume where the track would be had the roll never happened.
+            // Slip: resume where the track would be had the roll never happened (inside the loop, if one plays).
             rolling = false
-            seekToInternal(slipCursor / (source?.sampleRate ?: SAMPLE_RATE))
+            val resume = slipCursor / (source?.sampleRate ?: SAMPLE_RATE)
+            val length = loopOutSec - loopInSec
+            seekToInternal(if (loopActive && resume >= loopOutSec) loopInSec + (resume - loopInSec) % length else resume)
         }
     }
 
@@ -650,7 +759,7 @@ class Deck(val index: Int) {
     // ------------------------------------------------------------------
 
     /**
-     * Renders [frames] at [SAMPLE_RATE]. The result is post-trim, post-EQ,
+     * Renders [frames] at [outputRate]. The result is post-trim, post-EQ,
      * post-filter and post-pad-FX, but pre-fader, so the engine can build both
      * the master and the cue bus from it.
      */
@@ -664,29 +773,45 @@ class Deck(val index: Int) {
             jogBend = 0.0
             stretching = false
             tailLeft = 0
+            syncSnap = true // a synced deck starts on the master's beat
             renderFx(outL, outR, frames) // let echo and reverb tails ring out
             return
         }
 
         val rate = src.sampleRate.toDouble()
-        val ratio = rate / SAMPLE_RATE
+        val ratio = rate / outputRate
         val playStep = if (playing) {
             val sync = if (syncEnabled && grid.valid && syncMaster != null && syncMaster.grid.valid && syncMaster.playing) {
-                // Follow the master's tempo as it moves, and pull the beats together.
-                syncFactor = (syncMaster.effectiveBpm() / (grid.bpm * tempoRate)).coerceIn(0.5, 2.0)
-                val error = BeatGrid.phaseError(syncMaster.phase(), phase())
+                // Follow the master's tempo as it moves, and keep the beats together.
+                followTempo(syncMaster)
+                if (scratching || nudge != 0.0 || abs(jogBend) > 1e-3) {
+                    // A nudge is kept, as on Pioneer gear: from here sync holds the tempo around it.
+                    syncOffset = beatError(syncMaster)
+                } else if (syncSnap && !cuePreview) {
+                    // PLAY, a hot cue or a seek: back on the master's beat at once, crossfaded like any jump.
+                    val shift = beatShift(syncMaster) * rate
+                    if (stretching) grainLeft = min(grainLeft, tailLeft) else if (tailLeft == 0) startTail(cursor, JUMP_FADE)
+                    cursor += shift
+                    positionSec = cursor / rate
+                    if (!src.hasFrame(cursor)) src.seek(positionSec)
+                }
+                val error = BeatGrid.phaseError(beatError(syncMaster), syncOffset)
                 syncFactor * (1.0 + (error * 0.05).coerceIn(-0.004, 0.004))
             } else {
                 syncFactor
             }
+            syncSnap = false
             jogBend *= 0.9
             ratio * tempoRate * sync * (1.0 + nudge + jogBend)
         } else {
             0.0
         }
         val step = if (scratching) {
-            // Spread the pending movement over a few blocks: smooth, but still tight.
-            val move = scratchPending * 0.4
+            // Follow the platter's speed and take up part of what is left to travel: at a steady
+            // speed the sound no longer trails the hand, and the jog's coarse ticks stay smoothed.
+            val behind = scratchPending - scratchRate
+            val move = scratchRate + SCRATCH_CATCH_UP * behind
+            scratchRate += SCRATCH_FOLLOW * behind
             scratchPending -= move
             move / frames
         } else {
@@ -703,7 +828,7 @@ class Deck(val index: Int) {
         val stretch = keyLock && playing && !scratching
         if (stretch != stretching) {
             if (stretch) {
-                grainPos = cursor
+                grainPos = Math.rint(cursor)
                 grainLeft = GRAIN_HOP
             } else {
                 startTail(grainPos, GRAIN_OVERLAP) // back to reading at the playhead, without a click
@@ -728,7 +853,7 @@ class Deck(val index: Int) {
                 outL[i] = 0f
                 outR[i] = 0f
                 i++
-                if (++misses > SAMPLE_RATE / 4) {
+                if (++misses > outputRate / 4) {
                     misses = 0
                     if (durationFrames > 0.0 && cursor > durationFrames - rate) {
                         playing = false // metadata duration was longer than the audio
@@ -796,6 +921,8 @@ class Deck(val index: Int) {
     private fun seekToInternal(seconds: Double) {
         val src = source ?: return
         val clamped = seconds.coerceIn(0.0, max(0.0, durationSec))
+        // A jump past the loop (hot cue, needle, search) leaves it: it would fall straight back in.
+        if (loopActive && clamped >= loopOutSec) exitLoop()
         if (playing || scratching) {
             // Fade the old position out over a few ms rather than cutting it. A grain
             // already fading out finishes first, then the next grain starts at the target.
@@ -804,6 +931,7 @@ class Deck(val index: Int) {
         cursor = clamped * src.sampleRate
         positionSec = clamped
         misses = 0
+        syncSnap = true
         if (!src.hasFrame(cursor)) src.seek(clamped)
     }
 
@@ -835,7 +963,8 @@ class Deck(val index: Int) {
                 }
             }
         }
-        grainPos = cursor + best * ratio
+        // On a whole frame: at the track's own rate a grain then reads its samples as they are.
+        grainPos = Math.rint(max(0.0, cursor + best * ratio)) // before the track nothing can be read: the deck would freeze
         grainLeft = GRAIN_HOP
     }
 
@@ -863,7 +992,7 @@ class Deck(val index: Int) {
     }
 
     private fun updateFilters() {
-        val fs = SAMPLE_RATE.toDouble()
+        val fs = outputRate.toDouble()
         val lowDb = MixerMath.eqDecibels(eqLow)
         if (lowDb != lastLowDb) {
             lowL.setLowShelf(fs, 120.0, lowDb)
@@ -916,6 +1045,7 @@ class Deck(val index: Int) {
     class PadFx(val label: String, val type: FxType?, val beats: Double)
 
     companion object {
+        /** The usual rate of music files, and the output rate until the engine sets another. */
         const val SAMPLE_RATE = 44100
 
         // Pad modes, numbered like the high nibble of the FLX4 pad notes.
@@ -970,6 +1100,16 @@ class Deck(val index: Int) {
         private const val GRAIN_HOP = 3072
         private const val GRAIN_OVERLAP = 512
         private const val GRAIN_SEEK = 512
+
+        // Scratch tracking (an alpha-beta filter): the share of the remaining travel taken per
+        // block, and how fast the followed speed adapts. Simulated with jog reports every 1 to
+        // 8 ms: at a steady speed the sound trails the platter by 2 to 5 ms instead of 10 to 14;
+        // strokes of 2 to 10 per second travel within 5 % of the hand (the plain 0.4 it replaces
+        // fell 7 to 17 % short); a dead stop is overshot by under 5 ms; a slow drag is a little
+        // rougher (speed ripple 27 % instead of 21 % at a third of normal speed). shortcut: tuned
+        // by simulation, not by ear on the FLX4.
+        private const val SCRATCH_CATCH_UP = 0.5
+        private const val SCRATCH_FOLLOW = 0.05
 
         /** Crossfade on a jump (hot cue, loop, seek): 3 ms, enough to avoid a click. */
         private const val JUMP_FADE = 128

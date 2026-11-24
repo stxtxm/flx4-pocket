@@ -132,7 +132,7 @@ class KnobView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     override fun delta(dx: Float, dy: Float): Float = (dx - dy) / (150f * density)
 
     override fun onDraw(canvas: Canvas) {
-        val labelHeight = 11f * density
+        val labelHeight = 13f * density
         val radius = min(width / 2f, (height - labelHeight) / 2f) - 3f * density
         if (radius <= 0f) return
         val cx = width / 2f
@@ -167,7 +167,7 @@ class KnobView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
 
         paint.style = Paint.Style.FILL
         paint.color = LABEL
-        paint.textSize = 8.5f * density
+        paint.textSize = 10f * density
         paint.textAlign = Paint.Align.CENTER
         paint.typeface = Typeface.DEFAULT_BOLD
         canvas.drawText(contentDescription?.toString().orEmpty(), cx, height - 2f * density, paint)

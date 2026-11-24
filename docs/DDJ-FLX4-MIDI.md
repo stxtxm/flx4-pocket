@@ -27,7 +27,7 @@ Status bytes: deck 1 `0x90`/`0xB0`, deck 2 `0x91`/`0xB1`, Beat FX
 | CUE | Note | `0x0C` | CDJ cue: set / preview while held / return and stop | yes |
 | SHIFT + CUE | Note | `0x48` | Jump to track start | yes |
 | SHIFT | Note | `0x3F` | Modifier only: shifted controls send their own notes | yes |
-| BEAT SYNC | Note | `0x58` | Sync tempo and phase to the other deck, or release | yes |
+| BEAT SYNC | Note | `0x58` | Take the other deck's tempo and land on its beats, or release. The controller sends it when the button is let go | yes |
 | BEAT SYNC long press | Note | `0x5C` | Make this deck the sync master | yes |
 | SHIFT + BEAT SYNC | Note | `0x60` | Cycle tempo range ±6 / ±10 / ±16 % / WIDE | yes |
 | IN | Note | `0x10` | Loop in (on the beat with quantize). During a loop: the jog moves the loop in point until IN again | yes |
@@ -35,18 +35,18 @@ Status bytes: deck 1 `0x90`/`0xB0`, deck 2 `0x91`/`0xB1`, Beat FX
 | 4 BEAT/EXIT | Note | `0x4D` | 4-beat loop from the nearest beat / exit the loop | yes |
 | SHIFT + 4 BEAT/EXIT | Note | `0x50` | Active loop: the last loop on or off, in phase | yes |
 | SHIFT + IN / OUT | Note | `0x4C` / `0x4E` | None in rekordbox; ignored | no |
-| CUE/LOOP CALL ◄ / ► | Note | `0x51` / `0x53` | During a loop: halve / double it. Otherwise: call the previous / next memory cue (a point becomes the cue point, a memory loop plays) | yes |
+| CUE/LOOP CALL ◄ / ► | Note | `0x51` / `0x53` | During a loop: halve / double it from the loop in point. Otherwise, as in rekordbox: jump to the previous / next memory cue and wait there (a point becomes the cue point, a memory loop is ready to play) | yes |
 | SHIFT + CUE/LOOP CALL ◄ | Note | `0x3E` | Delete the memory cue called last | yes |
 | SHIFT + CUE/LOOP CALL ► | Note | `0x3D` | Save the loop playing, or else the cue point, as a memory cue | yes |
 | Headphones CUE | Note | `0x54` | Deck in the headphone cue bus | yes |
-| SHIFT + headphones CUE | Note | `0x68` | Toggle quantize | yes |
+| SHIFT + headphones CUE | Note | `0x68` | Tap the tempo, as in rekordbox (three taps or more; see "Tap" below). Up to 0.5 it toggled quantize, which is the Q button on screen | yes |
 | Jog touch (also with SHIFT) | Note | `0x36` (`0x67`) | Scratch mode while touched | yes |
 | Jog platter, touched | CC | `0x22` | Scratch: relative, `0x40` = still, 720 ticks per turn | yes |
 | Jog side / vinyl off | CC | `0x21` / `0x23` | Pitch bend; fine positioning when paused | yes |
 | SHIFT + jog | CC | `0x29` | Search, 0.2 s per tick | yes |
-| TEMPO | CC | `0x00` + `0x20` | Pitch fader, with soft takeover (it drives the tempo once it reaches the deck's playing speed). Value 0 is the "+" end (fastest) | yes |
+| TEMPO | CC | `0x00` + `0x20` | Pitch fader, with soft takeover (it drives the tempo once it reaches the deck's playing speed). Ignored while the deck is synced, as on Pioneer players: SYNC off keeps the tempo and hands it back. Value 0 is the "+" end (fastest) | yes |
 | TRIM | CC | `0x04` + `0x24` | Trim, unity at centre | yes |
-| EQ HI / MID / LOW | CC | `0x07` / `0x0B` / `0x0F` (+ `0x20`) | ±24 dB shelf / peak / shelf | yes |
+| EQ HI / MID / LOW | CC | `0x07` / `0x0B` / `0x0F` (+ `0x20`) | −26 / +6 dB shelf / peak / shelf, like a DJM | yes |
 | Channel fader | CC | `0x13` + `0x33` | Channel volume | yes |
 
 ## Pad modes (channel 1 / 2) and pads (channel 8 / 10, SHIFT layer 9 / 11)
@@ -59,7 +59,7 @@ if a mode-button message was missed.
 | --- | --- | --- | --- | --- |
 | HOT CUE | `0x1B` | `0x00`–`0x07` | Set / jump; SHIFT + pad deletes | yes |
 | PAD FX 1 | `0x1E` | `0x10`–`0x17` | Hold: echo 1/4, 1/2, 3/4, 1; slip roll 1/8, 1/4, 1/2, 1 | yes |
-| BEAT JUMP | `0x20` | `0x20`–`0x27` | −1, +1, −2, +2, −4, +4, −8, +8 beats | yes |
+| BEAT JUMP | `0x20` | `0x20`–`0x27` | −1, +1, −2, +2, −4, +4, −8, +8 beats; during a loop the loop moves with the deck (rekordbox's loop move) | yes |
 | SAMPLER | `0x22` | `0x30`–`0x37` | Not supported (message shown) | decoded |
 | KEYBOARD (SHIFT + HOT CUE) | `0x69` | `0x40`–`0x47` | Not supported | decoded |
 | PAD FX 2 (SHIFT + PAD FX 1) | `0x6B` | `0x50`–`0x57` | Hold: low-cut echo 1/2, 1; reverb; flanger; phaser; trans 1/8, 1/4, 1/2 | yes |
@@ -118,7 +118,7 @@ Note On to the same address as the control, `0x7F` on and `0x00` off.
 | Hot-cue pads | pad ch `0x00`–`0x07` | Cue stored |
 | Pad FX pads | pad ch `0x10`–`0x17`, `0x50`–`0x57` | Pad held |
 | Beat-jump pads | pad ch `0x20`–`0x27` | Mode selected |
-| Beat-loop pads | pad ch `0x60`–`0x67` | That loop length is active |
+| Beat-loop pads | pad ch `0x60`–`0x67` | That loop length is active (also after 4 BEAT, halving or doubling) |
 | BEAT FX ON/OFF | ch 5 `0x47` | Blinks on `0x7F` (effect on), steady on `0x00` |
 | SMART CFX | ch 7 `0x00` | Smart CFX on |
 | MASTER CUE | ch 7 `0x63` | Master cue on |
@@ -138,6 +138,25 @@ the app's mixer matches the hardware from the moment it is plugged in. `Flx4Deco
 when its position changes: a repeated answer can never undo a change made on
 the touch screen. The decoder is reset on each connection, so the first answer
 always applies. Not yet verified on hardware.
+
+## Sync, loops and tap, as rekordbox plays them
+
+- **BEAT SYNC** matches the tempo (87 against 174 BPM counts as the same
+  tempo) and the beat position. A synced deck lands on the master's beat when
+  it starts and after a hot cue, a memory cue or a search; a jog nudge is
+  kept, sync then holds the tempo around it. SYNC off keeps the tempo.
+- **Sync master**: the deck the other one was synced to. When it stops, the
+  deck still playing takes the role, so the deck on air never follows a track
+  being loaded or cued. The long press hands it over by hand.
+- **Quantize** (Q on screen): loop points and new hot cues snap to the grid,
+  and a hot cue played on a running deck lands as far into the beat as the
+  deck was, so the rhythm goes on.
+- **Loops**: the loop length shows on the 4 BEAT / EXIT button on screen and
+  on the BEAT LOOP pads. A jump past the end of a loop leaves the loop.
+- **Tap** (SHIFT + headphones CUE, or TAP on screen): when the taps agree with
+  the analysed tempo, or with its half or double, that tempo is kept (it is
+  far finer than a finger) and the grid only moves half a beat if the taps
+  fall between its beats. Otherwise the grid is rebuilt from the taps.
 
 ## Changed in 0.2.0
 

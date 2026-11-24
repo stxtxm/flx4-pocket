@@ -22,7 +22,16 @@ enum class FxType(val label: String) {
  * Parameters are volatile and read once per block; [process] must only be
  * called from the audio thread. Android-free, so it is unit tested on the JVM.
  */
-class FxUnit(private val sampleRate: Int = 44100) {
+class FxUnit(sampleRate: Int = 44100) {
+
+    /** Rate of the stream it processes: the engine sets it, with the output stopped, when the output changes. */
+    var sampleRate: Int = sampleRate
+        set(rate) {
+            if (rate == field) return
+            field = rate
+            lowCutCoef = lowCut(rate)
+            clear()
+        }
 
     @Volatile
     var type: FxType = FxType.ECHO
@@ -37,7 +46,7 @@ class FxUnit(private val sampleRate: Int = 44100) {
     @Volatile
     var enabled: Boolean = false
 
-    private val size = sampleRate * 2
+    private val size = MAX_RATE * 2
     private val bufL = FloatArray(size)
     private val bufR = FloatArray(size)
     private var write = 0
@@ -49,7 +58,7 @@ class FxUnit(private val sampleRate: Int = 44100) {
     private var gate = 1f
     private var lowL = 0f
     private var lowR = 0f
-    private val lowCutCoef = (1.0 - exp(-2.0 * PI * 500.0 / sampleRate)).toFloat()
+    private var lowCutCoef = lowCut(sampleRate)
 
     // Reverb: four damped combs and two all-passes per channel (Freeverb layout).
     private val combs = Array(8) { FloatArray(COMB_LENGTHS[it % 4] + if (it >= 4) 23 else 0) }
@@ -220,7 +229,11 @@ class FxUnit(private val sampleRate: Int = 44100) {
         }
     }
 
+    private fun lowCut(rate: Int) = (1.0 - exp(-2.0 * PI * 500.0 / rate)).toFloat()
+
     companion object {
+        /** The delay lines hold two seconds at this rate, the highest the engine runs at. */
+        private const val MAX_RATE = 48000
         private const val TAIL_SECONDS = 8
         private val COMB_LENGTHS = intArrayOf(1557, 1617, 1491, 1422)
         private val ALL_PASS_LENGTHS = intArrayOf(225, 556)

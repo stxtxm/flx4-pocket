@@ -1,11 +1,15 @@
 package io.github.timotheegrollier.flx4pocket
 
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * BPM estimation based on an onset-energy autocorrelation.
+ * Beat grid estimation from an onset-energy autocorrelation: the tempo to a
+ * few thousandths of a BPM, so a grid holds for a whole track, and the time
+ * of one beat.
  *
  * It is intentionally dependency-free and Android-free. When the estimate has
  * a low confidence the UI marks the BPM with "~", and the grid can always be
@@ -84,97 +88,124 @@ object BpmAnalyzer {
         val maxLag = minOf(n / 2, (fps * 60.0 / 55.0).roundToInt())
         if (maxLag <= minLag + 2) return null
 
-        val scores = DoubleArray(maxLag + 1)
-        var total = 0.0
-        var counted = 0
-        for (lag in minLag..maxLag) {
-            var sum = 0.0
-            var count = 0
-            var i = lag
-            while (i < n) {
-                sum += env[i] * env[i - lag]
-                count++
-                i++
-            }
-            scores[lag] = if (count > 0) sum / count else 0.0
-            total += scores[lag]
-            counted++
-        }
-        if (counted == 0) return null
-        val mean = total / counted
-        if (mean <= 0.0) return null
+        // Autocorrelation up to four beats of the slowest tempo.
+        val top = minOf(n / 2, maxLag * 4 + 3)
+        val acf = DoubleArray(top + 2)
+        for (lag in minLag - 1..top) acf[lag] = correlation(env, lag)
 
+        // A beat also repeats after 2, 3 and 4 beats (a bar). Each value counts
+        // with its neighbours, since a beat rarely lasts a whole number of
+        // frames. The shortest lag wins unless a longer one is clearly better,
+        // which settles ties between a beat and its multiples.
         var bestLag = minLag
-        var bestScore = -1.0
+        var bestScore = 0.0
+        var total = 0.0
         for (lag in minLag..maxLag) {
-            var score = scores[lag]
-            if (lag * 2 <= maxLag) score += scores[lag * 2] * 0.5
-            if (lag * 3 <= maxLag) score += scores[lag * 3] * 0.25
-            if (score > bestScore) {
+            var score = 0.0
+            for (m in 1..4) {
+                var peak = 0.0
+                for (k in lag * m - m / 2..minOf(top, lag * m + m / 2)) {
+                    peak = max(peak, acf[k - 1] + acf[k] + acf[k + 1])
+                }
+                score += peak
+            }
+            total += score
+            if (score > bestScore * 1.1) {
                 bestScore = score
                 bestLag = lag
             }
         }
         if (bestScore <= 0.0) return null
+        val confidence = bestScore * (maxLag - minLag + 1) / total
 
-        var bpm = 60.0 * fps / bestLag
-        while (bpm < 70.0) bpm *= 2.0
-        while (bpm > 180.0) bpm /= 2.0
-        if (!bpm.isFinite()) return null
+        // An integer lag is far too coarse for a grid that must hold for a whole
+        // track. The same peak comes back after 2, 4, 8 ... beats: followed up
+        // to half the stretch, a fraction of a frame there is a thousandth of a BPM.
+        var period = peak(env, bestLag)
+        var beats = 1
+        while (true) {
+            val next = minOf(beats * 2, (n / 2 / period).toInt())
+            if (next <= beats) break
+            beats = next
+            period = peak(env, (period * beats).roundToInt()) / beats
+        }
+        if (!(period >= 4.0)) return null
 
-        // Integer autocorrelation bins are not precise enough for a grid that
-        // must stay aligned for minutes. Refine both tempo and phase against the
-        // first 12 seconds of onsets, where a small BPM error cannot accumulate.
-        val refined = refineGrid(env, fps, n, bpm)
-        val confidence = bestScore / mean
+        // One octave, so that a tempo never has two readings (87 and 174).
+        var bpm = 60.0 * fps / period
+        while (bpm < MIN_BPM) {
+            bpm *= 2.0
+            period /= 2.0
+        }
+        while (bpm >= MIN_BPM * 2.0) {
+            bpm /= 2.0
+            period *= 2.0
+        }
+
+        // Fold the whole stretch onto one beat: the anchor is the centre of
+        // mass of its three busiest frames, which is finer than one frame.
+        val bins = ceil(period).toInt()
+        val weight = DoubleArray(bins)
+        val moment = DoubleArray(bins)
+        for (i in 0 until n) {
+            val phase = i - floor(i / period) * period
+            val bin = minOf(phase.toInt(), bins - 1)
+            weight[bin] += env[i]
+            moment[bin] += env[i] * phase
+        }
+        var best = 0
+        var heaviest = -1.0
+        for (bin in 0 until bins) {
+            val w = weight[(bin + bins - 1) % bins] + weight[bin] + weight[(bin + 1) % bins]
+            if (w > heaviest) {
+                heaviest = w
+                best = bin
+            }
+        }
+        var mass = 0.0
+        var sum = 0.0
+        for (d in -1..1) {
+            val bin = (best + d + bins) % bins
+            // A neighbour across the end of the beat belongs to the next or previous one.
+            val turn = if (best + d < 0) -period else if (best + d >= bins) period else 0.0
+            mass += weight[bin]
+            sum += moment[bin] + turn * weight[bin]
+        }
+        if (mass <= 0.0) return null
+        var anchor = sum / mass
+        anchor -= floor(anchor / period) * period
         return Estimate(
-            bpm = refined.first,
-            anchorSec = refined.second,
+            bpm = bpm,
+            anchorSec = anchor / fps,
             confidence = if (confidence.isFinite()) confidence else 0.0
         )
     }
 
-    private fun refineGrid(
-        env: DoubleArray,
-        fps: Double,
-        n: Int,
-        initialBpm: Double
-    ): Pair<Double, Double> {
-        val minBpm = (initialBpm - 4.0).coerceAtLeast(50.0)
-        val maxBpm = (initialBpm + 4.0).coerceAtMost(200.0)
-        val horizon = minOf(n, (fps * 12.0).toInt())
-        var bestBpm = initialBpm
-        var bestPhase = 0.0
-        var bestScore = -1.0
-
-        var bpm = minBpm
-        while (bpm <= maxBpm) {
-            val period = fps * 60.0 / bpm
-            if (period >= 2.0) {
-                var phase = 0.0
-                while (phase < period) {
-                    var sum = 0.0
-                    var beats = 0
-                    var position = phase
-                    while (position < horizon) {
-                        val index = position.roundToInt()
-                        if (index in 0 until n) sum += env[index]
-                        position += period
-                        beats++
-                    }
-                    if (beats > 0) {
-                        val score = sum / beats
-                        if (score > bestScore + 1e-12) {
-                            bestScore = score
-                            bestBpm = bpm
-                            bestPhase = phase
-                        }
-                    }
-                    phase += 1.0
-                }
-            }
-            bpm += 0.02
-        }
-        return bestBpm to bestPhase / fps
+    /** Mean product of the envelope with itself [lag] frames later. */
+    private fun correlation(env: DoubleArray, lag: Int): Double {
+        if (lag <= 0 || lag >= env.size) return 0.0
+        var sum = 0.0
+        for (i in lag until env.size) sum += env[i] * env[i - lag]
+        return sum / (env.size - lag)
     }
+
+    /** Position, finer than one frame, of the autocorrelation peak within two lags of [center]. */
+    private fun peak(env: DoubleArray, center: Int): Double {
+        var best = center
+        var top = -1.0
+        for (lag in center - 2..center + 2) {
+            val value = correlation(env, lag)
+            if (value > top) {
+                top = value
+                best = lag
+            }
+        }
+        val before = correlation(env, best - 1)
+        val after = correlation(env, best + 1)
+        val curve = before - 2.0 * top + after
+        return if (curve < 0.0) best + (0.5 * (before - after) / curve).coerceIn(-0.5, 0.5) else best.toDouble()
+    }
+
+    /** Tempos are read in one octave from here: house and techno as they are, 174 not 87, and 85 as 170. */
+    private const val MIN_BPM = 89.5
 }

@@ -8,6 +8,7 @@ import android.view.View
 import android.widget.TextView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
@@ -15,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.android.controller.ActivityController
@@ -123,6 +125,9 @@ class MainActivityTest {
         screenshot(activity, "waveforms.png")
 
         fun track(name: String, folder: String) = Track(Uri.parse("content://demo/$name"), name, 0L, folder)
+        val analysed = AnalysisCache(activity)
+        analysed.put(track("Night Drive.mp3", "Music/House"), BpmAnalyzer.Result(124.0, 0.0, 2.0, 372.0))
+        analysed.put(track("Second Track.flac", "Music/House"), BpmAnalyzer.Result(126.0, 0.0, 2.0, 305.0))
         activity.setLibrary(
             listOf(
                 track("Night Drive.mp3", "Music/House"), track("Second Track.flac", "Music/House"),
@@ -135,6 +140,49 @@ class MainActivityTest {
         activity.onButton(-1, Flx4Button.BROWSE_PRESS, true)
         activity.onBrowse(3, shift = false)
         screenshot(activity, "library.png")
+        val row = activity.findViewById<android.widget.ListView>(R.id.library_list).getChildAt(0)
+        assertEquals("the tempo has its own column in the track list", "124.0", row.findViewById<TextView>(R.id.row_bpm).text.toString())
+    }
+
+    /** Waits for the mixer thread, which runs on its own in these tests. */
+    private fun eventually(what: String, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 3000
+        while (!condition()) {
+            assertTrue(what, System.currentTimeMillis() < deadline)
+            Thread.sleep(5)
+        }
+    }
+
+    @Test
+    fun `the deck on air is the sync master, not one that is stopped`() {
+        val activity = launch().get()
+        val engine = activity.engine
+        loadDemoTrack(engine.decks[0], "Next", "", bpm = 124.0, at = 0.0)
+        loadDemoTrack(engine.decks[1], "On Air", "", bpm = 126.0, at = 0.0)
+        assertEquals(0, engine.masterDeckIndex)
+        engine.decks[1].togglePlay() // deck B is on air; deck A, the master so far, is stopped
+        eventually("the playing deck takes the master role") { engine.masterDeckIndex == 1 }
+    }
+
+    @Test
+    fun `REC records until it is pressed again`() {
+        val activity = launch().get()
+        val rec = activity.findViewById<TextView>(R.id.btn_rec)
+        refresh(activity)
+        assertEquals("REC", rec.text.toString())
+        rec.performClick()
+        assertTrue(activity.engine.recorder != null)
+        refresh(activity)
+        if (activity.engine.recorder != null) { // these tests have no media store: the recording may already have ended, with a message
+            assertTrue(rec.text.toString(), rec.text.startsWith("●"))
+            assertEquals(activity.getColor(R.color.danger), rec.backgroundTintList!!.defaultColor)
+            rec.performClick()
+        }
+        assertEquals(null, activity.engine.recorder)
+        refresh(activity)
+        assertEquals("REC", rec.text.toString())
+        val said = org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+        assertTrue(said, said.contains("Music/FLX4 Pocket") || said.startsWith("Cannot record"))
     }
 
     /** Lays the screen out at the configured size and writes it to build/screenshots. */
@@ -153,6 +201,74 @@ class MainActivityTest {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
         return root
+    }
+
+    @Test
+    fun `held upright the screen restacks, with the same engine`() {
+        val controller = launch()
+        val activity = controller.get()
+        activity.onBackPressed() // closes the first-run library
+        loadDemoTrack(activity.engine.decks[0], "Night Drive", "Demo Artist", bpm = 124.0, at = 31.3)
+        loadDemoTrack(activity.engine.decks[1], "Second Track", "", bpm = 126.0, at = 12.0)
+        val engine = activity.engine
+        val deckA = activity.findViewById<View>(R.id.deck_a)
+        val deckB = activity.findViewById<View>(R.id.deck_b)
+        val mixer = activity.findViewById<View>(R.id.mixer)
+        val status = activity.findViewById<View>(R.id.status)
+
+        RuntimeEnvironment.setQualifiers("w412dp-h915dp-port-420dpi")
+        controller.configurationChange()
+        assertSame("the activity owns the engine: a rotation must not recreate it", activity, controller.get())
+        assertSame(engine, activity.engine)
+        assertEquals("Night Drive", engine.decks[0].title)
+        refresh(activity)
+        val update = activity.findViewById<TextView>(R.id.btn_update)
+        update.text = "UPDATE 0.6.1" // the longest label the version button takes
+        val root = screenshot(activity, "upright.png")
+        assertTrue(root.height > root.width)
+        val at = IntArray(2)
+        update.getLocationInWindow(at)
+        assertTrue("the version button fits: ${at[0] + update.width} > ${root.width}", at[0] + update.width <= root.width)
+        assertEquals("three panels are too many for one column: the mixer starts folded", View.GONE, mixer.visibility)
+        assertTrue("the decks stack, each the full width", deckB.top >= deckA.bottom && deckA.width > root.width * 0.9)
+        assertTrue("the status line has a row of its own", status.width > root.width / 2)
+
+        activity.findViewById<View>(R.id.toggle_mixer).performClick()
+        activity.findViewById<View>(R.id.toggle_deck_b).performClick()
+        screenshot(activity, "upright-mixer.png")
+        fun track(name: String, folder: String) = Track(Uri.parse("content://demo/$name"), name, 0L, folder)
+        activity.setLibrary(listOf(track("Night Drive.mp3", "Music/House"), track("Warehouse.mp3", "Music/Techno")))
+        activity.onBrowse(1, shift = false)
+        val folders = activity.findViewById<View>(R.id.library_folders)
+        val tracks = activity.findViewById<View>(R.id.library_list)
+        screenshot(activity, "upright-library.png")
+        assertTrue("folders above the tracks, both the full width", folders.width == tracks.width && folders.height < tracks.height)
+        activity.onBackPressed()
+
+        RuntimeEnvironment.setQualifiers("w915dp-h412dp-land-420dpi")
+        controller.configurationChange()
+        screenshot(activity, "side.png")
+        assertEquals("on its side again, with the panels that were open there", View.VISIBLE, deckB.visibility)
+        assertTrue("side by side: ${deckA.right} ${mixer.left} ${mixer.right} ${deckB.left}", deckB.left >= mixer.right && mixer.left >= deckA.right)
+    }
+
+    @Test
+    fun `the screen keeps clear of the camera hole and of the rounded corners`() {
+        val controller = launch()
+        val root = controller.get().findViewById<View>(R.id.root)
+        fun display(cutout: android.graphics.Insets) = android.view.WindowInsets.Builder()
+            .setInsets(android.view.WindowInsets.Type.displayCutout(), cutout)
+            .apply { for (corner in 0..3) setRoundedCorner(corner, android.view.RoundedCorner(corner, 100, 100, 100)) }
+            .build()
+        fun padding() = listOf(root.paddingLeft, root.paddingTop, root.paddingRight, root.paddingBottom)
+
+        root.dispatchApplyWindowInsets(display(android.graphics.Insets.of(130, 0, 0, 0)))
+        assertEquals("on its side: the hole on the left, 60 % of a corner on the right, the full height", listOf(130, 0, 60, 0), padding())
+
+        RuntimeEnvironment.setQualifiers("w412dp-h915dp-port-420dpi")
+        controller.configurationChange()
+        root.dispatchApplyWindowInsets(display(android.graphics.Insets.of(0, 130, 0, 0)))
+        assertEquals("upright: the hole on top, the corners below, the full width", listOf(0, 130, 0, 60), padding())
     }
 
     @Test

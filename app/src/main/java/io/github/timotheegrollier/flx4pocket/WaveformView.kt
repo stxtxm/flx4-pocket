@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -44,7 +45,14 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     /** Seconds of audio visible across the view. */
     var visibleSeconds = 8.0
+        set(seconds) {
+            field = seconds
+            invalidate()
+        }
     var onZoom: ((Double) -> Unit)? = null
+
+    /** Seconds the output delays the sound: the waveform shows what is heard, not what is being mixed. */
+    var latency = 0.0
 
     /** False while the library is open over the decks: a resting finger must not hold a playing track. */
     var scratchable = true
@@ -68,6 +76,9 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
     // the view runs its own clock and only steers it towards the real one.
     private var shown = 0.0
     private var lastFrameNanos = 0L
+    private var lastActual = 0.0
+    private var still = true
+    private val idleRedraw = Runnable { invalidate() }
 
     private var lastX = 0f
     private val pinch = ScaleGestureDetector(
@@ -88,20 +99,28 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
     }
 
     override fun onDraw(canvas: Canvas) {
-        postInvalidateOnAnimation() // free-running: redraw on every display frame
-        val d = deck ?: return
+        val d = deck
         val w = width.toFloat()
         val h = height.toFloat()
-        if (w <= 0f || !d.hasTrack()) return
+        if (d == null || w <= 0f || !d.hasTrack()) {
+            still = true
+            redrawLater(idleRedraw)
+            return
+        }
 
         val now = System.nanoTime()
-        val dt = ((now - lastFrameNanos) / 1e9).coerceIn(0.0, 0.1)
+        val dt = if (still) 0.0 else ((now - lastFrameNanos) / 1e9).coerceIn(0.0, 0.1)
         lastFrameNanos = now
-        val actual = d.positionSec
         val speed = d.speed
+        val actual = d.positionSec - latency * speed
         shown += dt * speed
         val error = actual - shown
         if (speed == 0.0 || abs(error) > 0.25) shown = actual else shown += error * 0.15
+        // Every display frame only while the picture moves (playing, scratching, a jog cueing, an
+        // analysis filling in); a still deck is looked at about fifteen times a second, which spares the battery.
+        still = speed == 0.0 && actual == lastActual && d.waveform?.complete != false
+        lastActual = actual
+        if (still) redrawLater(idleRedraw) else postInvalidateOnAnimation()
 
         val centre = w / 2f
         val middle = h / 2f
@@ -279,12 +298,22 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> d.scratchEnd()
         }
+        invalidate() // the waveform follows the finger at once, even on a still deck
         return true
     }
 
     companion object {
         const val HOT_CUE_LETTERS = "ABCDEFGH"
     }
+}
+
+/**
+ * A view with nothing moving redraws about fifteen times a second, to pick up a new cue, loop, grid or
+ * track. One pending redraw per view, however often it is drawn in between.
+ */
+private fun View.redrawLater(redraw: Runnable) {
+    removeCallbacks(redraw)
+    postDelayed(redraw, 50 - SystemClock.uptimeMillis() % 50) // all views on the same ticks: one frame for all
 }
 
 /**
@@ -303,6 +332,7 @@ class OverviewView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private var cachedWave: Waveform? = null
     private var cachedSize = -1
     private var frame = 0
+    private val idleRedraw = Runnable { invalidate() }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         lines = FloatArray(max(0, w) * 4)
@@ -310,7 +340,7 @@ class OverviewView @JvmOverloads constructor(context: Context, attrs: AttributeS
     }
 
     override fun onDraw(canvas: Canvas) {
-        postInvalidateOnAnimation()
+        redrawLater(idleRedraw) // its playhead moves a pixel now and then: no need for every frame
         val w = width
         val h = height.toFloat()
         paint.color = 0xFF121820.toInt()
@@ -388,6 +418,7 @@ class OverviewView @JvmOverloads constructor(context: Context, attrs: AttributeS
         if (event.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
         if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
             d.seekTo((event.x / width).coerceIn(0f, 1f) * d.durationSec)
+            invalidate()
         }
         return true
     }

@@ -3,8 +3,10 @@ package io.github.timotheegrollier.flx4pocket
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
@@ -13,15 +15,19 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.RoundedCorner
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -37,6 +43,12 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
+import java.io.RandomAccessFile
+import java.nio.channels.FileChannel
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -62,6 +74,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private lateinit var panels: List<DeckPanel>
     private lateinit var waves: List<WaveformView>
     private lateinit var statusLabel: TextView
+    private lateinit var recButton: TextView
     private lateinit var masterVu: VuView
     private lateinit var crossfader: FaderView
     private lateinit var smartCfx: TextView
@@ -115,7 +128,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         override fun run() {
             if (midi.connected) updateLeds()
             val now = SystemClock.uptimeMillis()
-            if (engine.decks.any { it.playing }) lastPlayedAt = now
+            if (busy) lastPlayedAt = now
             if (serviceRunning && now - lastPlayedAt > SERVICE_IDLE_MS) {
                 serviceRunning = false
                 stopService(Intent(this@MainActivity, PlaybackService::class.java))
@@ -130,6 +143,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private var midiName: String? = null
     private var frame = 0
     private var lastBackPress = 0L
+    private var recordingName = ""
 
     private val preferences by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
@@ -165,6 +179,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         work = Executors.newFixedThreadPool(4)
 
         setContentView(R.layout.activity_main)
+        fitDisplayShape()
         statusLabel = findViewById(R.id.status)
         masterVu = findViewById(R.id.master_vu)
         setupDecks()
@@ -173,7 +188,9 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         setupPanels()
         findViewById<View>(R.id.btn_library).setOnClickListener { showLibrary(!libraryVisible) }
         findViewById<View>(R.id.btn_audio).setOnClickListener { showAudioSettings() }
-        updates = UpdateUi(this, findViewById(R.id.btn_update), work) { engine.decks.any { it.playing } }
+        recButton = findViewById(R.id.btn_rec)
+        recButton.setOnClickListener { toggleRecording() }
+        updates = UpdateUi(this, findViewById(R.id.btn_update), work) { busy }
         updates.start()
 
         engine.start()
@@ -232,13 +249,45 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
     }
 
+    /**
+     * Rounded display corners and the camera hole hide what sits under them. From Android 12
+     * the screen knows their shape: it fills the display and keeps its content clear of the
+     * hole, of any system bar still showing and, at both ends of its long sides, of 60 % of the
+     * corner radius. There a corner's arc is under 4 dp deep: less than the gap the controls
+     * already keep from the edge, so the long sides give nothing up.
+     */
+    private fun fitDisplayShape() {
+        if (Build.VERSION.SDK_INT < 31) return // no corner shape to read: Android's own fitting stays
+        window.setDecorFitsSystemWindows(false)
+        window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+        findViewById<View>(R.id.root).setOnApplyWindowInsetsListener { view, insets ->
+            val edge = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            fun corners(a: Int, b: Int) =
+                (maxOf(insets.getRoundedCorner(a)?.radius ?: 0, insets.getRoundedCorner(b)?.radius ?: 0) * 0.6f).toInt()
+            if (upright) {
+                view.setPadding(
+                    edge.left, maxOf(edge.top, corners(RoundedCorner.POSITION_TOP_LEFT, RoundedCorner.POSITION_TOP_RIGHT)),
+                    edge.right, maxOf(edge.bottom, corners(RoundedCorner.POSITION_BOTTOM_LEFT, RoundedCorner.POSITION_BOTTOM_RIGHT))
+                )
+            } else {
+                view.setPadding(
+                    maxOf(edge.left, corners(RoundedCorner.POSITION_TOP_LEFT, RoundedCorner.POSITION_BOTTOM_LEFT)), edge.top,
+                    maxOf(edge.right, corners(RoundedCorner.POSITION_TOP_RIGHT, RoundedCorner.POSITION_BOTTOM_RIGHT)), edge.bottom
+                )
+            }
+            WindowInsets.CONSUMED
+        }
+    }
+
     @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
     override fun onBackPressed() {
         val now = SystemClock.uptimeMillis()
         when {
             libraryVisible -> showLibrary(false)
             // A stray back gesture must not end a set.
-            engine.decks.any { it.playing } && now - lastBackPress > 2500 -> {
+            busy && now - lastBackPress > 2500 -> {
                 lastBackPress = now
                 toast(getString(R.string.back_again))
             }
@@ -357,23 +406,77 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         foldable = listOf(findViewById(R.id.deck_a), findViewById(R.id.mixer), findViewById(R.id.deck_b))
         panelToggles = listOf(findViewById(R.id.toggle_deck_a), findViewById(R.id.toggle_mixer), findViewById(R.id.toggle_deck_b))
         foldable.forEachIndexed { i, panel ->
-            panel.visibility = if (preferences.getBoolean(PANEL_PREFS[i], true)) View.VISIBLE else View.GONE
             panelToggles[i].setOnClickListener {
                 val show = panel.visibility != View.VISIBLE
                 panel.visibility = if (show) View.VISIBLE else View.GONE
-                preferences.edit().putBoolean(PANEL_PREFS[i], show).apply()
+                preferences.edit().putBoolean(scoped(PANEL_PREFS[i]), show).apply()
                 layoutPanels()
             }
         }
-        layoutPanels()
         setupResize()
+        applyOrientation()
+    }
+
+    private val upright: Boolean get() = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
+    /** Held upright, the screen remembers its own panels and waveform height; landscape keeps the keys it always had. */
+    private fun scoped(key: String) = if (upright) "$key.upright" else key
+
+    /** The activity is never recreated (it owns the audio engine): a rotation only restacks the screen. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyOrientation()
+    }
+
+    /**
+     * Held upright, the panels stack instead of sitting side by side, so each gets the
+     * full width, and the two bars that need more than that width take two rows.
+     */
+    private fun applyOrientation() {
+        val stacked = upright
+        findViewById<LinearLayout>(R.id.panel_row).stack(stacked)
+        findViewById<LinearLayout>(R.id.library_body).stack(stacked)
+        findViewById<LinearLayout>(R.id.library_header).stack(stacked)
+        // The status line leaves the button row for a row of its own under it, and takes the
+        // version button along: UPDATE 0.6.1 would not fit in the button row.
+        val buttons = findViewById<LinearLayout>(R.id.bar_row)
+        val status = findViewById<LinearLayout>(R.id.bar_status)
+        val update = findViewById<View>(R.id.btn_update)
+        (status.parent as ViewGroup).removeView(status)
+        (update.parent as ViewGroup).removeView(update)
+        (status.layoutParams as LinearLayout.LayoutParams).run {
+            width = if (stacked) ViewGroup.LayoutParams.MATCH_PARENT else 0
+            height = if (stacked) buttons.layoutParams.height else ViewGroup.LayoutParams.MATCH_PARENT
+            weight = if (stacked) 0f else 1f
+        }
+        if (stacked) findViewById<LinearLayout>(R.id.control_bar).addView(status)
+        else buttons.addView(status, panelToggles.size)
+        (if (stacked) status else buttons).addView(update)
+        findViewById<View>(R.id.bar_gap).visibility = if (stacked) View.VISIBLE else View.GONE
+        // Three panels are too many for one column: there the mixer starts folded.
+        foldable.forEachIndexed { i, panel ->
+            val open = preferences.getBoolean(scoped(PANEL_PREFS[i]), !stacked || i != 1) // 1: the mixer
+            panel.visibility = if (open) View.VISIBLE else View.GONE
+        }
+        applyWaveShare(findViewById(R.id.waves), preferences.getFloat(scoped(PREF_WAVE_SHARE), if (stacked) 0.22f else 1f / 3f))
+        layoutPanels()
+        findViewById<View>(R.id.root).requestApplyInsets() // the long sides are now the other pair
+    }
+
+    /** Turns a row into a column, or back: every child trades its width for its height. */
+    private fun LinearLayout.stack(vertical: Boolean) {
+        if ((orientation == LinearLayout.VERTICAL) == vertical) return
+        orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            child.layoutParams = child.layoutParams.apply { width = height.also { height = width } }
+        }
     }
 
     /** Dragging the bar under the waveforms (outside its buttons) moves the line between waveforms and panels. */
     @SuppressLint("ClickableViewAccessibility") // a drag; the panel toggles are the accessible way to resize
     private fun setupResize() {
         val waveArea = findViewById<View>(R.id.waves)
-        applyWaveShare(waveArea, preferences.getFloat(PREF_WAVE_SHARE, 1f / 3f))
         var startY = 0f
         var startShare = 0f
         findViewById<View>(R.id.control_bar).setOnTouchListener { _, event ->
@@ -387,7 +490,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 MotionEvent.ACTION_MOVE ->
                     applyWaveShare(waveArea, (startShare + (event.rawY - startY) / total).coerceIn(0.15f, 0.85f))
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                    preferences.edit().putFloat(PREF_WAVE_SHARE, waveShare).apply()
+                    preferences.edit().putFloat(scoped(PREF_WAVE_SHARE), waveShare).apply()
             }
             true
         }
@@ -430,7 +533,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
         // Started while the screen is in front (Android refuses it from the background), so a
         // set keeps playing when the screen goes off or another app opens. The ticker stops it.
-        if (!serviceRunning && engine.decks.any { it.playing }) {
+        if (!serviceRunning && busy) {
             lastPlayedAt = SystemClock.uptimeMillis()
             serviceRunning = runCatching {
                 startForegroundService(Intent(this, PlaybackService::class.java))
@@ -448,8 +551,16 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         if (fx.enabled) fxOn.tint(fxColor, dark) else fxOn.tint(idle, text)
         if (engine.decks[0].smartCfx) smartCfx.tint(fxColor, dark) else smartCfx.tint(idle, text)
         if (engine.masterCue) masterCue.tint(fxColor, dark) else masterCue.tint(idle, text)
+        waves.forEach { it.latency = engine.latencyMs / 1000.0 }
+        val tape = engine.recorder
+        recButton.show(if (tape == null) "REC" else "● " + minutes(tape.frames / tape.sampleRate))
+        if (tape == null) recButton.tint(idle, text) else recButton.tint(getColor(R.color.danger), text)
+        if (tape?.error != null) toggleRecording() // it ended by itself: stop and say why
         updateStatus()
     }
+
+    /** A deck plays or the mix is being recorded: nothing may stop the app unasked. */
+    private val busy: Boolean get() = engine.decks.any { it.playing } || engine.recorder.let { it != null && it.error == null }
 
     private fun updateStatus() {
         val problem = engine.error
@@ -464,8 +575,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             engine.splitCue -> "split cue"
             else -> "stereo"
         }
+        // The rate and "fast" (Android's low-latency path) say what the measured delay is made of.
+        val path = "${(engine.sampleRate / 1000.0).toString().removeSuffix(".0")} kHz${if (engine.lowLatency) " fast" else ""}"
         val latency = if (engine.latencyMs > 0) "  ·  ${engine.latencyMs} ms" else ""
-        statusLabel.show("${midiName ?: getString(R.string.status_no_controller)}  ·  $output ($layout)$latency")
+        statusLabel.show("${midiName ?: getString(R.string.status_no_controller)}  ·  $output ($layout)  ·  $path$latency")
         statusLabel.setTextColor(getColor(if (midiName != null) R.color.ok else R.color.text_dim))
     }
 
@@ -524,6 +637,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             d.syncEnabled -> d.releaseSync()
             !d.grid.valid -> toast("This deck has no BPM yet — wait for the analysis or TAP the tempo")
             !other.grid.valid -> toast("The other deck has no BPM yet")
+            // The deck on air must not take the tempo of one that is stopped.
+            d.playing && !other.playing -> toast("Deck ${DECK_NAMES[1 - deck]} is not playing: nothing to sync to")
             else -> {
                 engine.setMasterDeck(1 - deck)
                 d.engageSync(other)
@@ -542,12 +657,11 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         if (times.isNotEmpty() && now - times.last() > 2200) times.clear()
         times.add(now)
         if (times.size > 8) times.removeAt(0)
-        if (times.size < 3) return
+        if (times.size < 3 || times.last() == times.first()) return
         var bpm = 60_000.0 * (times.size - 1) / (times.last() - times.first())
         while (bpm < 70.0) bpm *= 2.0
         while (bpm > 180.0) bpm /= 2.0
-        val d = engine.decks[deck]
-        d.setGrid(bpm, d.positionSec, 2.0)
+        engine.decks[deck].tapGrid(bpm, engine.latencyMs / 1000.0)
     }
 
     override fun onCuesChanged(deck: Int) {
@@ -622,10 +736,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 onCuesChanged(deck)
             }
             Flx4Button.PFL -> d?.let { it.cueEnabled = !it.cueEnabled }
-            Flx4Button.QUANTIZE -> d?.let {
-                it.quantize = !it.quantize
-                toast("Quantize ${if (it.quantize) "on" else "off"}")
-            }
+            Flx4Button.TAP -> onTap(deck) // rekordbox: SHIFT + headphones CUE taps the tempo
             Flx4Button.LOAD -> {
                 // Pressed twice: instant doubles, as in rekordbox.
                 val now = SystemClock.uptimeMillis()
@@ -654,7 +765,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val d = engine.decks.getOrNull(deck)
         when (knob) {
             // The fader's low end is its "+" side: 0 is fastest, 1 is slowest.
-            Flx4Knob.TEMPO -> if (d != null) tempoFader(deck, d, 1.0 - 2.0 * value)
+            Flx4Knob.TEMPO -> if (d != null) tempoFader(deck, d, 1.0 - Math.round(value * 16383.0) / 8192.0) // code 8192: exactly 0 %, as in Mixxx
             Flx4Knob.TRIM -> d?.trim = value
             Flx4Knob.EQ_HIGH -> d?.eqHigh = value
             Flx4Knob.EQ_MID -> d?.eqMid = value
@@ -678,6 +789,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val current = d.tempoPosition
         val last = tempoFaders[index]
         tempoFaders[index] = position
+        if (d.syncEnabled) return // as on Pioneer gear, a synced deck ignores its fader: SYNC off hands the tempo back
         val inControl = !last.isNaN() && abs(last - current) < TAKEOVER
         val crossed = !last.isNaN() && (last - current) * (position - current) <= 0.0
         if (inControl || crossed || abs(position - current) < TAKEOVER) d.setTempoNormalized(position)
@@ -688,7 +800,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val hardware = tempoFaders[index]
         val current = engine.decks[index].tempoPosition
         return when {
-            hardware.isNaN() || abs(hardware - current) < TAKEOVER -> 0
+            hardware.isNaN() || engine.decks[index].syncEnabled || abs(hardware - current) < TAKEOVER -> 0
             hardware < current -> 1
             else -> -1
         }
@@ -1084,9 +1196,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 track.name.substringBeforeLast('.').ifBlank { track.name }
             val analysis = cache.get(track)
             view.findViewById<TextView>(R.id.row_info).text = if (analysis == null) "" else String.format(
-                Locale.US, "%.1f BPM  ·  %d:%02d",
-                analysis.bpm, analysis.durationSec.toInt() / 60, analysis.durationSec.toInt() % 60
+                Locale.US, "%d:%02d", analysis.durationSec.toInt() / 60, analysis.durationSec.toInt() % 60
             )
+            view.findViewById<TextView>(R.id.row_bpm).text =
+                if (analysis == null) "" else String.format(Locale.US, "%.1f", analysis.bpm)
             view.findViewById<View>(R.id.row_load_a).setOnClickListener { loadFromRow(0, track) }
             view.findViewById<View>(R.id.row_load_b).setOnClickListener { loadFromRow(1, track) }
             // The row under the cursor stands out while BROWSE moves in the tracks.
@@ -1109,7 +1222,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val density = resources.displayMetrics.density
             val view = convertView as? TextView ?: TextView(this@MainActivity).apply {
-                textSize = 13f
+                textSize = 15f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 gravity = Gravity.CENTER_VERTICAL
@@ -1136,6 +1249,51 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     }
 
     // ---------------------------------------------------------------------
+    // Recording
+    // ---------------------------------------------------------------------
+
+    /** REC: the master output goes to a WAV file in [RECORDINGS] until REC is pressed again. */
+    private fun toggleRecording() {
+        val done = engine.stopRecording()
+        if (done == null) {
+            recordingName = "FLX4 set " + SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.US).format(Date())
+            engine.startRecording(::newRecordingFile)
+            return
+        }
+        val length = minutes(done.frames / done.sampleRate)
+        val gaps = if (done.dropped > 0) ", with ${done.dropped} gaps (the storage was too slow)" else ""
+        toast(
+            when {
+                done.error == null -> "Recorded $length to $recordings$gaps"
+                done.frames == 0L -> "Cannot record: ${done.error}"
+                else -> "Recording stopped: ${done.error}. $length kept in $recordings"
+            }
+        )
+    }
+
+    /** Where [newRecordingFile] puts them, as the Files app shows it. */
+    private val recordings: String
+        get() = if (Build.VERSION.SDK_INT < 29) getExternalFilesDir(Environment.DIRECTORY_MUSIC)?.path ?: RECORDINGS else RECORDINGS
+
+    /** A new WAV in the phone's Music folder: no permission needed from Android 10; before that, the app's own folder. */
+    private fun newRecordingFile(part: Int): FileChannel {
+        val name = recordingName + (if (part > 1) " part $part" else "") + ".wav"
+        if (Build.VERSION.SDK_INT < 29) {
+            return RandomAccessFile(File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), name), "rw").channel
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, name)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/x-wav")
+            put(MediaStore.Audio.Media.RELATIVE_PATH, RECORDINGS)
+        }
+        val uri = contentResolver.insert(MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+            ?: throw IOException("Cannot create $name")
+        return ParcelFileDescriptor.AutoCloseOutputStream(contentResolver.openFileDescriptor(uri, "rw")).channel
+    }
+
+    private fun minutes(seconds: Long): String = String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60)
+
+    // ---------------------------------------------------------------------
     // Audio settings
     // ---------------------------------------------------------------------
 
@@ -1149,7 +1307,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             content.addView(TextView(this).apply {
                 text = label
                 setTextColor(getColor(R.color.text_dim))
-                textSize = 11f
+                textSize = 13f
             })
             content.addView(FaderView(this).apply {
                 accent = getColor(R.color.accent)
@@ -1221,5 +1379,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val FX_BEATS = doubleArrayOf(0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0)
         val FX_BEAT_LABELS = arrayOf("1/8", "1/4", "1/2", "3/4", "1", "2", "4", "8")
         val FX_TARGET_LABELS = arrayOf("CH A", "CH B", "MASTER")
+
+        /** Where recordings go, under the phone's shared storage. */
+        const val RECORDINGS = "Music/FLX4 Pocket"
     }
 }

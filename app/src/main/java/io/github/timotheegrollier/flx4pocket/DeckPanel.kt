@@ -2,6 +2,7 @@ package io.github.timotheegrollier.flx4pocket
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.ColorStateList
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.LayoutInflater
@@ -10,6 +11,8 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Touch controls of one deck. The panel owns the deck area itself and is also
@@ -117,15 +120,12 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
             it.setOnClickListener(loadIfEmpty)
         }
         overview.setOnClickListener(loadIfEmpty)
-        header.findViewById<TextView>(R.id.wave_deck).let {
-            it.text = if (index == 0) "A" else "B"
-            it.tint(accentColor, onAccent)
-        }
+        header.findViewById<View>(R.id.wave_chip).backgroundTintList = ColorStateList.valueOf(accentColor)
+        header.findViewById<TextView>(R.id.wave_deck).text = if (index == 0) "A" else "B"
         title = header.findViewById(R.id.wave_title)
         state = header.findViewById(R.id.wave_state)
         bpm = header.findViewById(R.id.wave_bpm)
         time = header.findViewById(R.id.wave_time)
-        bpm.setTextColor(accentColor)
         overview.deck = deck
         overview.accent = accentColor
 
@@ -262,7 +262,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
                 "ANALYSING".takeIf { analysing },
                 "MASTER".takeIf { isMaster && hasTrack },
                 "SMART CFX".takeIf { deck.smartCfx }
-            ).joinToString("   ")
+            ).joinToString("") { "  $it  " }
         )
         val tempoBpm = deck.effectiveBpm()
         bpm.show(
@@ -292,7 +292,9 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         val blink = SystemClock.uptimeMillis() / 250 % 2 == 0L
         style(loopIn, if (deck.loopAdjust == Deck.ADJUST_IN) blink else deck.loopInSec >= 0.0)
         style(loopOut, if (deck.loopAdjust == Deck.ADJUST_OUT) blink else deck.loopActive)
-        reloop.show(if (deck.loopActive) "EXIT" else "4 BEAT")
+        // The loop button doubles as the loop length readout, so halving and doubling are not blind.
+        val loopBeats = deck.loopBeats()
+        reloop.show(if (deck.loopActive) "${beatsLabel(loopBeats)}\nEXIT" else "4\nBEAT")
         val memory = !deck.loopActive && deck.memoryCues.isNotEmpty()
         half.show(if (memory) "◄ MEM" else "½")
         double.show(if (memory) "MEM ►" else "2×")
@@ -301,7 +303,6 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
 
         val mode = deck.padMode
         TAB_MODES.forEachIndexed { i, tabMode -> style(tabs[i], tabMode == mode) }
-        val loopBeats = deck.loopBeats()
         val cues = deck.hotCues
         pads.forEachIndexed { i, pad ->
             when (mode) {
@@ -312,7 +313,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
                     if (at == null) pad.tint(panelAlt, textDim) else pad.tint(WaveColors.HOT_CUES[i], onAccent)
                 }
                 Deck.PAD_BEAT_LOOP -> {
-                    pad.show(LOOP_LABELS[i])
+                    pad.show(beatsLabel(Deck.LOOP_BEATS[i]))
                     style(pad, loopBeats == Deck.LOOP_BEATS[i])
                 }
                 Deck.PAD_BEAT_JUMP -> {
@@ -341,8 +342,17 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         val TAB_MODES = intArrayOf(
             Deck.PAD_HOT_CUE, Deck.PAD_BEAT_LOOP, Deck.PAD_BEAT_JUMP, Deck.PAD_FX1, Deck.PAD_FX2
         )
-        val TAB_LABELS = arrayOf("HOT CUE", "BEAT LOOP", "BEAT JUMP", "PAD FX 1", "PAD FX 2")
-        val LOOP_LABELS = arrayOf("1/4", "1/2", "1", "2", "4", "8", "16", "32")
+        val TAB_LABELS = arrayOf("HOT\nCUE", "BEAT\nLOOP", "BEAT\nJUMP", "PAD\nFX 1", "PAD\nFX 2")
         val JUMP_LABELS = arrayOf("◄ 1", "1 ►", "◄ 2", "2 ►", "◄ 4", "4 ►", "◄ 8", "8 ►")
+    }
+}
+
+/** A loop length the way DJ gear writes it: 0.25 is "1/4", 4.0 is "4", 3.3 stays "3.3". */
+internal fun beatsLabel(beats: Double): String {
+    val inverse = 1.0 / beats
+    return when {
+        beats >= 1.0 && abs(beats - beats.roundToInt()) < 0.01 -> "${beats.roundToInt()}"
+        beats < 1.0 && abs(inverse - inverse.roundToInt()) < 0.02 * inverse -> "1/${inverse.roundToInt()}"
+        else -> String.format(Locale.US, "%.1f", beats)
     }
 }

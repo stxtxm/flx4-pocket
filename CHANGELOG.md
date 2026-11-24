@@ -1,5 +1,106 @@
 # Changelog
 
+## 0.6.0
+
+Sync and loops as rekordbox plays them, a beat grid that holds for a whole
+track, less delay between the FLX4 and the sound, the set recorded to WAV, and
+a bigger screen that also works upright.
+
+### Added
+
+- **REC** (bar under the waveforms) records the mix to a 24-bit WAV file in
+  `Music/FLX4 Pocket`: the master output as it is sent out, at the output's
+  own rate, with no lossy step. The button shows the elapsed time; the file
+  stays valid if the app is killed, and continues in a second file past 4 GB.
+- **Upright view.** Turn the phone and the same screen restacks, without
+  restarting anything: the panels in a column, each the full width, the
+  status line on its own row, the library with its folders above its tracks.
+  Each orientation remembers its own folded panels and waveform height;
+  upright, the mixer starts folded. Either way up, also on its side.
+- The loop length shows on the 4 BEAT / EXIT button (4, then the size and
+  EXIT while a loop plays), so halving and doubling are no longer blind.
+- The status line ends with the output's rate, `fast` when Android granted its
+  low-latency path, and the delay it reports.
+
+### Changed
+
+- **Bigger.** Larger text and taller buttons throughout; each deck's tempo is
+  a solid block in the deck's colour at the top left of its waveform, with the
+  deck letter (they used to sit small at the top right, in the screen's
+  corner); the remaining time and the MASTER mark have a dark backing; the
+  track list has a tempo column.
+- **Nothing under the corners.** From Android 12 the screen reads the shape of
+  the display and keeps clear of the camera and, along its long sides, of the
+  rounded corners.
+- **Beat grid.** The analysis finds the tempo to a few thousandths of a BPM
+  (it was 0.01 to 0.05 off, which is up to 115 ms after five minutes), from
+  the whole track instead of its first twelve seconds, so a long intro no
+  longer spoils it, and 174 BPM is no longer read as 87. Tempos read between
+  89.5 and 179 BPM. A first grid shows after a minute of the track is decoded,
+  the final one a few seconds later. Tracks analysed by an earlier version are
+  analysed again the first time they are loaded.
+- **Beat sync, as in rekordbox.** A synced deck lands on the master's beat
+  when it starts and after a hot cue, a memory cue or a search (it used to be
+  aligned only at the moment SYNC was pressed, then crept back over up to a
+  minute); a paused deck stays on its cue point. A jog nudge on a synced deck
+  is kept. SYNC off, or SYNC pressed on the other deck, keeps the tempo the
+  deck plays at (it jumped back to the fader's), widening the tempo range if
+  the fader could not reach it, as rekordbox switches to WIDE. 87 against 174 BPM syncs at
+  the same speed instead of doubling it. A master deck that stops hands the
+  role to the deck still playing, so the deck on air never follows a track
+  being loaded, cued or started under it. SYNC on the deck on air while the
+  other is stopped is refused. A synced deck ignores the FLX4 tempo fader, as
+  Pioneer players do.
+- **Less delay.** The output is opened at its own rate, which is what lets
+  Android give it its low-latency path; on Android 14 and later the FLX4's
+  sound card is asked to run at 44.1 kHz, so tracks reach it without being
+  resampled. Expected with the FLX4: 20 to 35 ms instead of 70 to 100 ms (see
+  `docs/ANDROID-LIMITS.md`). While scratching, the sound no longer trails a
+  steady hand by 10 ms. The waveforms show what is heard, not what is being
+  mixed.
+- **Sound.** Audio read between two samples (another speed, an output at
+  another rate, after a jump or in a loop) goes through a windowed sinc: flat
+  to 17 kHz, where the cubic read lost 1.7 dB at 15 kHz. With KEY, on an
+  output at the track's rate, the samples are played as they are.
+- With quantize, a hot cue played on a running deck lands as far into the beat
+  as the deck was, so the rhythm goes on (rekordbox's quantize).
+- CUE/LOOP CALL ◄ ► with no loop playing jump to the memory cue and wait
+  there, as in rekordbox (the deck used to play on).
+- BEAT JUMP during a loop moves the loop with the deck (rekordbox's loop
+  move).
+- SHIFT + headphones CUE on the FLX4 taps the tempo, as in rekordbox (it
+  toggled quantize, which stays on the Q button). TAP keeps the analysed tempo
+  when the taps agree with it, or with its half or double, and only moves the
+  grid half a beat if the taps fall between its beats.
+- The app no longer restarts, stopping the music, when the dark theme
+  switches, the font size changes or a keyboard is plugged in.
+- Waveforms are redrawn at full rate only while they move; a still deck costs
+  a fraction of what it did.
+
+### Fixed
+
+- In BEAT LOOP pad mode the pad of the current loop length almost never lit,
+  on screen and on the FLX4 (the length was compared exactly).
+- A 4 BEAT loop asked for at the very start of a track could be up to half a
+  beat short.
+- A hot cue or a search past the end of a playing loop fell back into the
+  loop: it now leaves it.
+- A deck synced to deck A ran 5.8 ms ahead when it was deck B.
+- Tapping the tempo with taps in the same millisecond could hang the app.
+- With KEY, a jump to the very start of a track (SHIFT + CUE, a hot cue at
+  0:00) could leave the deck silent until pause and play.
+- CUE, IN or a new hot cue set before the first beat of a track got a time
+  before 0:00: CUE stopped previewing and OUT was ignored. They now land on
+  the first beat.
+- A fault in the audio thread stopped the app: it now stops the sound and says
+  so; AUDIO restarts the output.
+
+### Documentation
+
+- `docs/ANDROID-LIMITS.md`: powering the FLX4 from the phone's USB-C port,
+  what the delay is made of, the limits of the beat grid, the recording.
+- `docs/TESTING.md`: the hardware checklist for all of the above.
+
 ## 0.5.0
 
 A library you can fill and browse from the phone and from the FLX4.

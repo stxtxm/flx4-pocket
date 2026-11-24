@@ -19,7 +19,7 @@
         <item name="android:backgroundTint">@color/panel_alt</item>
         <item name="android:gravity">center</item>
         <item name="android:textColor">@color/text</item>
-        <item name="android:textSize">10sp</item>
+        <item name="android:textSize">12sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:fontFamily">sans-serif-condensed</item>
         <item name="android:maxLines">2</item>
@@ -32,12 +32,20 @@
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_weight">0</item>
         <item name="android:minWidth">44dp</item>
-        <item name="android:paddingStart">10dp</item>
-        <item name="android:paddingEnd">10dp</item>
+        <item name="android:paddingStart">8dp</item>
+        <item name="android:paddingEnd">8dp</item>
     </style>
 
+    <!-- Pads and transport. -->
     <style name="Btn.Big">
-        <item name="android:textSize">13sp</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <!-- A narrow button that may need two short lines (pad modes, loop row, tempo column). -->
+    <style name="Btn.Tab">
+        <item name="android:textSize">11sp</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:lineSpacingMultiplier">0.9</item>
     </style>
 
     <style name="Knob">
@@ -51,7 +59,7 @@
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:textColor">@color/text</item>
-        <item name="android:textSize">11sp</item>
+        <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:maxLines">1</item>
         <item name="android:shadowColor">#FF000000</item>

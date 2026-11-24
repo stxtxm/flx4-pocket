@@ -4,7 +4,7 @@ package io.github.timotheegrollier.flx4pocket
 enum class Flx4Button {
     PLAY, CUE, TO_START, SHIFT, SYNC, MASTER, TEMPO_RANGE,
     LOOP_IN, LOOP_OUT, FOUR_BEAT_EXIT, ACTIVE_LOOP, CUE_LOOP_CALL_PREV, CUE_LOOP_CALL_NEXT,
-    MEMORY_DELETE, MEMORY_SAVE, PFL, QUANTIZE, JOG_TOUCH, LOAD, SHIFT_LOAD,
+    MEMORY_DELETE, MEMORY_SAVE, PFL, TAP, JOG_TOUCH, LOAD, SHIFT_LOAD,
 
     /** Beat FX channel selector: `deck` is the channel, `down` its state. */
     FX_CHANNEL,
@@ -159,7 +159,7 @@ class Flx4Decoder(private val listener: Flx4Listener) {
             MidiMap.NOTE_MEMORY_DELETE -> Flx4Button.MEMORY_DELETE
             MidiMap.NOTE_MEMORY_SAVE -> Flx4Button.MEMORY_SAVE
             MidiMap.NOTE_CUE_CHANNEL -> Flx4Button.PFL
-            MidiMap.NOTE_QUANTIZE -> Flx4Button.QUANTIZE
+            MidiMap.NOTE_TAP -> Flx4Button.TAP
             MidiMap.NOTE_JOG_TOUCH, MidiMap.NOTE_JOG_SHIFT_TOUCH -> Flx4Button.JOG_TOUCH
             else -> {
                 val mode = when (note) {

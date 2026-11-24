@@ -38,20 +38,38 @@ class PcmRingTest {
     }
 
     @Test
-    fun `interpolation keeps the highs that a linear one loses`() {
+    fun `interpolation keeps the highs`() {
         val rate = 44100
         val ring = PcmRing(rate, seconds = 1)
         val frames = 4410
-        val sine = FloatArray(frames * 2) { Math.sin(2.0 * Math.PI * 5000.0 * (it / 2) / rate).toFloat() }
-        ring.write(0, sine, frames)
         val out = FloatArray(2)
-        var worst = 0.0
-        for (i in 10 until frames - 10) {
-            assertTrue(ring.sample(i + 0.5, out))
-            worst = maxOf(worst, Math.abs(out[0] - Math.sin(2.0 * Math.PI * 5000.0 * (i + 0.5) / rate)))
+        // Between frames, a linear read is off by up to 0.06 at 5 kHz and a cubic one by 0.3 at 15 kHz.
+        for (hz in listOf(5000.0, 15000.0)) {
+            val sine = FloatArray(frames * 2) { Math.sin(2.0 * Math.PI * hz * (it / 2) / rate).toFloat() }
+            ring.write(0, sine, frames)
+            var worst = 0.0
+            for (i in 10 until frames - 10) {
+                for (between in listOf(0.25, 0.5, 0.9)) {
+                    assertTrue(ring.sample(i + between, out))
+                    worst = maxOf(worst, Math.abs(out[0] - Math.sin(2.0 * Math.PI * hz * (i + between) / rate)))
+                }
+            }
+            assertTrue("worst error at $hz Hz: $worst", worst < 0.002)
         }
-        // Linear interpolation is off by up to 0.063 here.
-        assertTrue("worst error $worst", worst < 0.01)
+    }
+
+    @Test
+    fun `a whole frame is read as it is`() {
+        val ring = PcmRing(sampleRate = 100, seconds = 1)
+        val noise = java.util.Random(3)
+        val data = FloatArray(200) { noise.nextFloat() - 0.5f }
+        ring.write(0L, data, 100)
+        val out = FloatArray(2)
+        for (i in 0 until 99) {
+            assertTrue(ring.sample(i.toDouble(), out))
+            assertEquals("an unshifted track comes out sample for sample", data[i * 2], out[0], 0f)
+            assertEquals(data[i * 2 + 1], out[1], 0f)
+        }
     }
 
     @Test

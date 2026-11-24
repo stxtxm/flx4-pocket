@@ -20,13 +20,16 @@ FLX4 MIDI ─┘   (wiring)        │  trim, EQ, filter, pad FX per deck
  Flx4Midi ─► Flx4Decoder       │  faders, crossfader, Beat FX, cue bus, limiter
                                ▼
                     AudioTrack: stereo, split cue or 4 channels
+                               │ master output, sample for sample
+                               ▼
+                    Recorder ─► 24-bit WAV in Music/FLX4 Pocket
 ```
 
 ## Layers
 
 | Layer | Files | Android-free |
 | --- | --- | --- |
-| DSP and deck logic | `Deck`, `Fx`, `Dsp`, `MixerMath`, `BeatGrid`, `BpmAnalyzer`, `Waveform`, `PcmRing` | yes |
+| DSP and deck logic | `Deck`, `Fx`, `Dsp`, `MixerMath`, `BeatGrid`, `BpmAnalyzer`, `Waveform`, `PcmRing`, `Recorder` | yes |
 | Controller protocol | `Flx4Protocol` (`Flx4Decoder`), `MidiMap` | yes |
 | Platform I/O | `AudioEngine`, `AudioSource`, `PcmDecoder`, `Flx4Midi`, `Library`, `Update*` | no |
 | Screen | `MainActivity`, `DeckPanel`, `WaveformView`, `Controls`, `UpdateUi` | no |
@@ -41,8 +44,26 @@ drive it with an in-memory source.
 256-frame blocks (5.8 ms at 44.1 kHz). Both decks render into the same block,
 so there is no second player clock to drift against.
 
+**Output rate.** Android gives a stream its low-latency ("fast") path only
+when it runs at the rate the output is mixed at; a 44.1 kHz stream on a
+48 kHz output goes through the normal mixer and a second buffer, some 60 ms
+later. So the engine has no fixed rate: `openTrack` tries the rates the
+output may run at, the likeliest first, and keeps the first one for which
+`AudioTrack.getPerformanceMode()` reports the fast path (read after `play()`,
+when the stream is on its output). Left alone, Android mixes a USB output at
+the highest rate the interface offers, 48 kHz on the FLX4; from Android 14
+the engine first asks for a 44.1 kHz mixer there
+(`setPreferredMixerAttributes`), so that 44.1 kHz tracks reach the controller
+without being resampled at all. The decks, the effects and the limiter are
+told the rate (`Deck.setOutputRate`) while the output is stopped. The status
+line shows the rate, `fast` when the path was granted, and the delay Android
+reports.
+
 Per block:
 
+0. A master deck that stops hands the sync master role to the deck still
+   playing. The follower renders first, while the master still stands where
+   the block starts.
 1. `Deck.render()` produces each deck post-trim, EQ, filter and pad FX, but
    pre-fader.
 2. The **cue bus** is tapped (decks whose CUE button is on), then the channel
@@ -55,6 +76,25 @@ Per block:
    headphones keep the gentler `MixerMath.softClip` curve.
 5. Headphones = cue bus (plus the master if MASTER CUE is on), blended with
    the master by the headphones mix knob.
+6. While REC is on, the master output of the block (after the master level and
+   the limiter: what is sent out) is copied into a pooled block for the
+   `Recorder`.
+
+A fault in the mix loop stops the sound, not the app: the status line says so
+and AUDIO restarts the output.
+
+## Recording
+
+`Recorder` is Android-free. The mixer thread only fills pooled blocks
+(`take` / `put` never wait and never allocate); a writer thread converts them
+to 24-bit PCM and writes them with positional `FileChannel` writes. The WAV
+header is rewritten every five seconds, so a recording is still valid if the
+app is killed; a file that would pass the 4 GB WAV limit is completed and the
+next part begins. A write error ends the recording and is shown. A WAV has one
+rate: if the output changes to another rate, the recording is completed and
+the screen says why. `MainActivity` supplies the files: from Android 10 a
+MediaStore audio entry under `Music/FLX4 Pocket` (no permission), before that
+the app's own music folder.
 
 Output layouts:
 
@@ -74,9 +114,8 @@ set at full volume. The four-channel track uses a channel *index* mask
 
 `AudioSource` runs a MediaCodec decoder on its own thread and writes PCM into
 a `PcmRing` at the absolute frame given by each buffer's timestamp. The mixer
-reads a fractional cursor with four-point cubic (Catmull-Rom) interpolation,
-which keeps the highs that a linear read loses whenever the tempo is off 0 %.
-The ring is circular, so evicting old audio costs nothing.
+reads a fractional cursor through the band-limited interpolation described
+below. The ring is circular, so evicting old audio costs nothing.
 
 A file decodes far faster than it plays, and the ring evicts its oldest audio
 when full. The decoder is therefore **throttled**: it only writes while less
@@ -91,13 +130,22 @@ dropped, so there is no silent gap. If the mixer finds a frame missing for
 250 ms (for example scratching far backwards), it requests a seek itself.
 
 A second thread (`flx4-fill`) decodes the whole track at full speed into a
-`TrackBuffer`: 16-bit stereo in native memory, about 10 MB a minute, for
-tracks up to 15 minutes. Reads prefer it, so within seconds of loading every
-jump (hot cue, loop, beat jump, needle) finds its audio already decoded, and
-the streaming decoder stops. Longer files only stream.
+`TrackBuffer`: 16-bit stereo, about 10 MB a minute, for tracks up to 15
+minutes. Android keeps direct buffers on the Java heap, so the manifest asks
+for a large heap (`largeHeap`): two 15-minute tracks need about 320 MB. If a
+buffer still does not fit, that deck only streams. Reads prefer it, so within
+seconds of loading every jump (hot cue, loop, beat jump, needle) finds its
+audio already decoded, and the streaming decoder stops. Longer files only
+stream.
 
-Without keylock, tempo is a resampling read (`sourceRate / 44100 × speed`):
-pitch follows speed.
+Without keylock, tempo is a resampling read (`sourceRate / outputRate ×
+speed`): pitch follows speed. Between two frames the read is band-limited
+(`Sinc`: sixteen frames weighed by a Kaiser-windowed sinc, 128 phases,
+interpolated between them), flat within 0.1 dB to 17 kHz; on a whole frame it
+returns the sample itself, so a track at 0 % on an output at its rate, read
+from its start, is played sample for sample (a jump, a loop or a sync
+correction lands between frames). Keylock grains start on whole frames for
+the same reason.
 
 ## Deck
 
@@ -112,15 +160,25 @@ pitch follows speed.
   fine), crossfaded over 12 ms. Scratching bypasses it.
 - **Jumps** (hot cues, loops, seeks) crossfade from the old position over
   3 ms instead of cutting; with keylock the next grain starts at the target.
-- **Sync**: the follower's factor is `masterBpm / ownBpm`, recomputed every
-  block so it follows the master's tempo; its cursor is moved by the shortest
-  phase error, then a correction of at most ±0.4 % per block keeps the phases
-  locked. Taking over with a tempo fader releases sync. `tempoPosition` is
-  where a fader must sit for the current speed, sync included: the FLX4 tempo
-  fader only takes over there (soft takeover).
+- **Sync**, as rekordbox plays BEAT SYNC: the follower's factor is
+  `masterBpm / ownBpm`, folded to the nearer of half, same and double speed
+  (87 against 174 BPM is one tempo) and recomputed every block so it follows
+  the master's tempo. Whenever the follower starts or jumps (PLAY, hot cue,
+  memory cue, search), its next block lands on the master's beat, crossfaded
+  like any jump; a paused deck stays on its cue point. In between, a
+  correction of at most ±0.4 % holds the beats together. A jog nudge, a bend
+  button or a scratch is kept: the offset it leaves becomes the target. SYNC
+  off folds the factor into the deck's own tempo, so nothing jumps, and
+  `tempoPosition` is where a fader must sit for that speed: the FLX4 tempo
+  fader, ignored while synced, takes over there (soft takeover).
 - **Loops**: manual in/out (quantized to the grid when Q is on), beat loops,
-  halve/double, reloop. A **loop roll** is a second, temporary loop with a
+  halve/double, reloop. `loopBeats()` gives the length in beats, exact for
+  the pad sizes so the pads and the screen can show it. A jump past the loop
+  end leaves the loop. A **loop roll** is a second, temporary loop with a
   slip cursor that keeps advancing; releasing the pad jumps to it.
+- **Scratch**: an alpha-beta filter follows the platter's speed and takes up
+  part of the remaining travel each block, so the sound does not trail a
+  steady hand while the jog's coarse ticks stay smoothed.
 - **Pads**: `padDown(mode, pad, shift)` / `padUp(mode, pad)` implement every
   mode. The touch UI passes the deck's selected mode; the controller passes
   the mode encoded in the pad note.
@@ -139,17 +197,67 @@ input. TRANS is phase-locked to the deck's beat position.
 
 `TrackAnalyzer` decodes each track once: `WaveformBuilder` reduces it to 150
 points per second of three peak bands (split at about 200 Hz and 4 kHz), and
-`BpmAnalyzer.Onsets` feeds the tempo estimate after the first minute. The
-waveform is handed to the deck immediately and fills in while it is drawn.
-Results are cached: grid and hot cues in SharedPreferences, waveforms as
-files in the cache directory, keyed by document URI and modification time.
+`BpmAnalyzer.Onsets` collects the energy the beat grid is estimated from: a
+first grid after one minute, so a deck can sync at once, then the final one
+from the whole track (up to ten minutes). The waveform is handed to the deck
+immediately and fills in while it is drawn. Results are cached: grid and hot
+cues in SharedPreferences, waveforms as files in the cache directory, keyed by
+document URI and modification time. Grids from before 0.6 only label the
+library until their track is loaded and analysed again.
 
-`WaveformView` redraws on every display frame. The mixer reports its position
-one audio buffer at a time, so the view runs its own clock at the deck's
-current speed and only steers it towards the reported position; that is what
-keeps the scroll smooth. Bars are anchored to track time rather than to
-screen pixels, so they do not shimmer while scrolling. The horizontal scale is
-heard time: two decks at the same BPM show the same beat spacing.
+## Beat grid
+
+Sync, quantize, loops and the drawn grid all rest on one tempo and the time
+of one beat. A grid that is 0.05 BPM off is 115 ms off after five minutes, so
+`BpmAnalyzer` works for thousandths of a BPM:
+
+1. Onset envelope: the rise of the log energy per 5.8 ms frame, minus its
+   local mean.
+2. Tempo: autocorrelation up to four beats of the slowest tempo. A lag scores
+   with its 2, 3 and 4 multiples (a beat also repeats after a bar), each value
+   summed with its neighbours since a beat is rarely a whole number of
+   frames; the shortest lag wins unless a longer one is 10 % better.
+3. Exact period: the same autocorrelation peak is followed to 2, 4, 8 ...
+   beats, up to half the stretch, with a parabolic fit: a fraction of a frame
+   at a lag of two minutes is a thousandth of a BPM.
+4. One octave: tempos read from 89.5 to 179 BPM, so 174 is never 87 (and 85
+   reads 170; sync treats half and double as the same tempo).
+5. Anchor: the envelope folded onto one beat; the centre of mass of its three
+   busiest frames is the beat, finer than one frame.
+
+Known limit: a breakbeat whose off-beat kicks outweigh its snares can anchor
+half a beat off. TAP (three taps or more) fixes that without touching the
+tempo: see `Deck.tapGrid`.
+
+## Waveform drawing
+
+`WaveformView` redraws on every display frame only while its picture moves
+(playing, scratching, a jog cueing, an analysis filling in); a still deck is
+redrawn about fifteen times a second, enough to pick up a new cue, loop or grid, and
+the overviews always are. The mixer reports its position one audio buffer at
+a time, so the view runs its own clock at the deck's current speed and only
+steers it towards the reported position, less the output delay Android
+reports: the playhead shows what is heard, not what is being mixed. Bars are
+anchored to track time rather than to screen pixels, so they do not shimmer
+while scrolling. The horizontal scale is heard time: two decks at the same BPM
+show the same beat spacing.
+
+## Screen
+
+One layout, inflated once. The activity owns the audio engine, so the
+manifest declares every configuration change as handled: a rotation, the dark
+theme switching or a keyboard being plugged in never recreates it.
+`MainActivity.applyOrientation` restacks the same views when the phone is
+held upright (`fullSensor`): the three panels become a column, the library
+puts its folders above its tracks, and the control bar and the library header
+take two rows. Folded panels and the waveform height are remembered per
+orientation. From Android 12 `fitDisplayShape` pads the screen away from the
+camera cutout and, at both ends of its long sides, from the rounded corners.
+Upright, the version button moves to the status row, where an update's
+longer label fits. Two changes still restart the screen, and so stop the
+music: a wallpaper or system colour change from Android 12 (it cannot be
+declared as handled), and a display size or font size change only applies
+after a restart.
 
 ## MIDI
 
@@ -176,11 +284,12 @@ the screen off.
 
 ## Background playback
 
-While a deck plays and the app is in front, `MainActivity` starts
+While a deck plays or REC is on and the app is in front, `MainActivity` starts
 `PlaybackService`, a `mediaPlayback` foreground service that only holds a
 notification: it keeps the process from being frozen or killed when the screen
 goes off or another app opens. The engine stays in the activity. The service
-stops after ten minutes without playback, or when the activity is destroyed.
+stops after ten minutes without playback or recording, or when the activity is
+destroyed.
 
 ## Threads
 
@@ -190,6 +299,7 @@ stops after ten minutes without playback, or when the activity is destroyed.
 | `flx4-mixer` (urgent audio) | mix loop, AudioTrack writes |
 | `flx4-decode`, one per deck | MediaExtractor + MediaCodec + ring writes, until the track buffer is complete |
 | `flx4-fill`, one per deck (background priority) | whole-track decode into the `TrackBuffer` |
+| `flx4-recorder`, while REC is on | PCM conversion and file writes |
 | worker pool (4) | folder scan, track load, analysis, update check / download |
 
 Deck transport methods and `Deck.render()` are synchronized on the deck; plain

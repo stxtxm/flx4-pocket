@@ -200,6 +200,75 @@ class DeckTest {
     }
 
     @Test
+    fun `a beat loop reports its size exactly on any grid, and the screen can show it`() {
+        deck.setGrid(127.3, 0.11, 2.0)
+        deck.seekTo(21.0) // (out - in) / beat is 4.000000000000003 here: no pad would light
+        deck.toggleBeatLoop(4.0)
+        assertEquals(4.0, deck.loopBeats(), 0.0)
+        deck.scaleLoop(0.5)
+        assertEquals(2.0, deck.loopBeats(), 0.0)
+        assertEquals("2", beatsLabel(deck.loopBeats()))
+        assertEquals(listOf("1/4", "1/2", "1", "32"), listOf(0.25, 0.5, 1.0, 32.0).map(::beatsLabel))
+        assertEquals("a manual loop of any length", "3.3", beatsLabel(3.27))
+    }
+
+    @Test
+    fun `a loop asked for before the first beat keeps its length`() {
+        deck.setGrid(128.0, 0.40, 2.0) // the first beat of the grid falls after half a beat
+        deck.fourBeatLoopOrExit() // at 0:00, to loop the intro
+        assertTrue(deck.loopInSec >= 0.0)
+        assertEquals(4.0, deck.loopBeats(), 0.0)
+    }
+
+    @Test
+    fun `a jump past a loop leaves it`() {
+        deck.seekTo(20.0)
+        deck.padDown(Deck.PAD_HOT_CUE, 0) // a hot cue later in the track
+        deck.seekTo(4.0)
+        deck.togglePlay()
+        deck.toggleBeatLoop(4.0) // 4.0 to 6.0
+        deck.seekTo(5.0)
+        assertTrue("inside the loop: it goes on", deck.loopActive)
+        deck.padDown(Deck.PAD_HOT_CUE, 0)
+        assertFalse(deck.loopActive)
+        play(0.5)
+        assertEquals("it plays on from the hot cue instead of falling back into the loop", 20.5, deck.positionSec, 0.26)
+    }
+
+    @Test
+    fun `beat jump during a loop moves the loop, as in rekordbox`() {
+        deck.seekTo(4.0)
+        deck.togglePlay()
+        deck.toggleBeatLoop(4.0) // 4.0 to 6.0
+        deck.seekTo(5.0)
+        deck.padDown(Deck.PAD_BEAT_JUMP, 5) // +4 beats
+        assertTrue(deck.loopActive)
+        assertEquals(6.0, deck.loopInSec, 1e-9)
+        assertEquals(8.0, deck.loopOutSec, 1e-9)
+        assertEquals(7.0, deck.positionSec, 1e-9)
+        deck.padDown(Deck.PAD_BEAT_JUMP, 6) // -8 beats
+        assertEquals(2.0, deck.loopInSec, 1e-9)
+        assertEquals(3.0, deck.positionSec, 1e-9)
+        deck.padDown(Deck.PAD_BEAT_JUMP, 6) // -8 beats again: the loop stops at the start of the track
+        assertEquals(0.0, deck.loopInSec, 1e-9)
+        assertEquals(2.0, deck.loopOutSec, 1e-9)
+        assertEquals(1.0, deck.positionSec, 1e-9)
+    }
+
+    @Test
+    fun `calling a memory cue waits on it, as in rekordbox`() {
+        deck.seekTo(8.0)
+        deck.cueDown()
+        deck.cueUp()
+        deck.saveMemoryCue()
+        deck.seekTo(1.0)
+        deck.togglePlay()
+        deck.cueLoopCall(1)
+        assertFalse(deck.playing)
+        assertEquals(8.0, deck.positionSec, 1e-9)
+    }
+
+    @Test
     fun `a loop seam crossfades instead of clicking`() {
         deck.load(SineSource(441.0), "Sine", "", 0.0)
         deck.quantize = false
@@ -456,16 +525,194 @@ class DeckTest {
         deck.togglePlay()
         assertTrue(deck.engageSync(master))
         assertEquals(126.0, deck.effectiveBpm(), 1e-6)
+        together(0.01, master) // it lands on the master's beat in its next block
         assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
 
-        repeat(200) {
-            master.render(256, l, r, null)
-            deck.render(256, l, r, master)
-        }
-        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 0.02)
+        together(1.2, master)
+        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
 
         deck.setTempoNormalized(0.0) // touching the tempo fader releases sync
         assertFalse(deck.syncEnabled)
+    }
+
+    /** Both decks for [seconds], as the mixer renders them: the follower first, then its master. */
+    private fun together(seconds: Double, master: Deck) = repeat((seconds * Deck.SAMPLE_RATE / 256).toInt().coerceAtLeast(1)) {
+        deck.render(256, l, r, master)
+        master.render(256, l, r, null)
+    }
+
+    private fun master(bpm: Double, anchor: Double = 0.0) = Deck(1).apply {
+        load(FakeSource(), "M", "", 0.0)
+        setGrid(bpm, anchor, 2.0)
+    }
+
+    @Test
+    fun `sync off keeps the tempo the deck plays at`() {
+        val master = master(126.0)
+        assertTrue(deck.engageSync(master))
+        deck.releaseSync() // SYNC pressed again, or SYNC pressed on the other deck
+        assertFalse(deck.syncEnabled)
+        assertEquals("no tempo jump on air", 126.0, deck.effectiveBpm(), 1e-6)
+        assertEquals("the fader takes over from there", 0.5, deck.tempoPosition, 1e-6)
+    }
+
+    @Test
+    fun `a synced deck lands on the master's beat when it starts and when it jumps`() {
+        val master = master(126.0, anchor = 0.1)
+        master.togglePlay()
+        play(1.0, target = master)
+        assertTrue(deck.engageSync(master))
+        assertEquals("a paused deck stays on its cue point", 0.0, deck.positionSec, 0.0)
+
+        play(0.33, target = master)
+        deck.togglePlay() // PLAY anywhere in the beat
+        together(0.01, master)
+        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
+        assertTrue("moved by less than half a beat, and not before the start", deck.positionSec in 0.0..0.3)
+
+        deck.seekTo(7.3) // needle search, hot cue, memory cue
+        together(0.01, master)
+        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
+        assertEquals(7.3, deck.positionSec, 0.26)
+    }
+
+    @Test
+    fun `a nudge on a synced deck is kept`() {
+        val master = master(126.0)
+        master.togglePlay()
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        together(0.5, master)
+        repeat(4) {
+            deck.bend(5) // the DJ pushes the platter: the grid was a little off
+            together(0.05, master)
+        }
+        together(0.5, master)
+        val nudged = BeatGrid.phaseError(master.phase(), deck.phase())
+        assertTrue("the deck now runs ahead of the master's grid", nudged < -0.02)
+        together(8.0, master)
+        assertEquals("sync holds the tempo around the nudge, it does not undo it", nudged, BeatGrid.phaseError(master.phase(), deck.phase()), 0.002)
+        assertEquals(126.0, deck.effectiveBpm(), 1e-6)
+    }
+
+    @Test
+    fun `sync off beyond the fader's range widens the range, so the fader can take over`() {
+        deck.setGrid(140.0, 0.0, 2.0)
+        assertTrue(deck.engageSync(master(100.0)))
+        deck.releaseSync()
+        assertEquals("the tempo on air is kept", 100.0, deck.effectiveBpm(), 1e-6)
+        assertEquals("WIDE, as rekordbox switches to", 0.50, deck.tempoRange, 1e-9)
+        assertTrue("a fader can reach it", abs(deck.tempoPosition) <= 1.0)
+        repeat(4) {
+            deck.cycleTempoRange()
+            assertTrue("never backwards", deck.tempoRate > 0.0)
+        }
+    }
+
+    @Test
+    fun `SYNC right after a jog push still lands on the beat`() {
+        val master = master(126.0, anchor = 0.1)
+        master.togglePlay()
+        deck.togglePlay()
+        together(1.0, master)
+        deck.bend(3) // the DJ pushes the platter, then presses SYNC at once
+        together(0.06, master)
+        assertTrue(deck.engageSync(master))
+        together(0.01, master)
+        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-6)
+    }
+
+    @Test
+    fun `a synced deck keeps its octave when the master's fader moves`() {
+        deck.setGrid(90.0, 0.0, 2.0)
+        val master = master(127.0) // 1.41 times faster: synced at the same octave
+        master.togglePlay()
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        together(0.1, master)
+        assertEquals(127.0, deck.effectiveBpm(), 1e-6)
+        master.setTempoNormalized(0.12) // +1.2 %: the ratio passes 1.42
+        together(0.1, master)
+        assertEquals("it follows, without dropping to half speed", 127.0 * 1.012, deck.effectiveBpm(), 1e-6)
+    }
+
+    @Test
+    fun `halving a short loop on a synced deck stays inside it`() {
+        val master = master(120.0)
+        master.togglePlay()
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        together(1.0, master)
+        deck.toggleBeatLoop(1.0)
+        val start = deck.loopInSec
+        while (deck.positionSec < start + 0.35) together(0.001, master) // 0.7 into the loop
+        deck.cueLoopCall(-1) // halve: the deck is past the new end and wraps, in phase
+        repeat(20) {
+            together(0.001, master)
+            assertTrue("${deck.positionSec} left the loop at $start", deck.positionSec >= start - 1e-6 && deck.positionSec <= start + 0.25 + 1e-6)
+        }
+    }
+
+    @Test
+    fun `with quantize a hot cue at the very start keeps the beat`() {
+        deck.setGrid(128.0, 0.35, 2.0) // the first beat 0.35 s in
+        deck.quantize = false
+        deck.padDown(Deck.PAD_HOT_CUE, 0) // a hot cue at 0:00
+        deck.quantize = true
+        deck.togglePlay()
+        deck.seekTo(0.35 + 20.1 * 60.0 / 128.0) // a tenth into a beat: earlier in its beat than the cue
+        deck.padDown(Deck.PAD_HOT_CUE, 0)
+        assertEquals("as far into the beat as before", 0.1, deck.phase(), 1e-6)
+        assertTrue(deck.positionSec < 0.5)
+    }
+
+    @Test
+    fun `cue and loop points set in a lead-in land on the first beat`() {
+        deck.setGrid(128.0, 0.35, 2.0)
+        deck.seekTo(0.05)
+        deck.cueDown()
+        deck.cueUp()
+        assertEquals(0.35, deck.cuePointSec, 1e-9)
+        deck.seekTo(0.05)
+        deck.setLoopIn()
+        assertEquals(0.35, deck.loopInSec, 1e-9)
+    }
+
+    @Test
+    fun `half and double tempo sync without changing speed`() {
+        deck.setGrid(87.0, 0.0, 2.0)
+        val master = master(174.0)
+        master.togglePlay()
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        assertEquals("87 BPM is 174 BPM: not twice the speed", 87.0, deck.effectiveBpm(), 1e-6)
+        deck.seekTo(3.37)
+        together(1.0, master)
+        assertEquals(87.0, deck.effectiveBpm(), 1e-3)
+        assertEquals("every beat of the slower deck falls on a beat of the master", 0.0, BeatGrid.phaseError(master.phase(), deck.phase() * 2), 1e-6)
+
+        deck.setGrid(174.0, 0.0, 2.0)
+        val slow = master(87.0)
+        slow.togglePlay()
+        assertTrue(deck.engageSync(slow))
+        assertEquals(174.0, deck.effectiveBpm(), 1e-6)
+    }
+
+    @Test
+    fun `with quantize a hot cue jumps without leaving the beat`() {
+        deck.seekTo(2.0)
+        deck.padDown(Deck.PAD_HOT_CUE, 0) // a hot cue on the beat at 2.0
+        deck.seekTo(10.0)
+        deck.togglePlay()
+        play(0.15) // 0.3 beat into a beat
+        val into = deck.phase()
+        deck.padDown(Deck.PAD_HOT_CUE, 0)
+        assertEquals("as far into the beat as before the jump", into, deck.phase(), 1e-9)
+        assertEquals(2.0 + into * 0.5, deck.positionSec, 1e-9)
+
+        deck.quantize = false
+        deck.padDown(Deck.PAD_HOT_CUE, 0)
+        assertEquals("without quantize: exactly on the cue", 2.0, deck.positionSec, 1e-9)
     }
 
     @Test
@@ -517,6 +764,53 @@ class DeckTest {
     }
 
     @Test
+    fun `at the output's own rate the deck keeps its time and its pitch`() {
+        deck.load(SineSource(441.0), "Sine", "", 0.0) // a 44.1 kHz track
+        deck.setOutputRate(48000) // on an output that runs at 48 kHz
+        deck.togglePlay()
+        var crossings = 0
+        var previous = 0f
+        repeat(375) { // two seconds of output
+            deck.render(256, l, r, null)
+            for (x in l) {
+                if (previous < 0f && x >= 0f) crossings++
+                previous = x
+            }
+        }
+        assertEquals(2.0, deck.positionSec, 1e-6)
+        assertEquals(441.0, crossings / 2.0, 1.0)
+    }
+
+    @Test
+    fun `with KEY a jump to the very start does not freeze the deck`() {
+        deck.load(object : PcmSource { // music-like: a tone in noise, so grains have a best place to start
+            override val sampleRate = 44100
+            override val durationSec = 30.0
+            override fun sampleFrame(frame: Double, out: FloatArray): Boolean {
+                if (frame < 0 || frame > durationSec * sampleRate) return false
+                val n = Math.floor(frame).toLong()
+                val noise = ((n * 1103515245L + 12345L) and 0x7fffffffL) / 2147483647.0 - 0.5
+                val v = (0.4 * Math.sin(2 * Math.PI * 441.0 * frame / sampleRate) + 0.4 * noise).toFloat()
+                out[0] = v
+                out[1] = v
+                return true
+            }
+            override fun hasFrame(frame: Double) = true
+            override fun seek(seconds: Double) {}
+            override fun close() {}
+        }, "Noise", "", 0.0)
+        deck.keyLock = true
+        deck.togglePlay()
+        repeat(40) { attempt ->
+            play(0.1 + attempt * 0.003) // land in a different place of the grain each time
+            deck.seekTo(0.0) // SHIFT + CUE, or a hot cue at 0:00
+            val peak = play(0.2)
+            assertTrue("attempt $attempt: still playing from the start", deck.positionSec in 0.15..0.25)
+            assertTrue("attempt $attempt: audible", peak > 0.3f)
+        }
+    }
+
+    @Test
     fun `keylock changes the tempo but not the pitch`() {
         deck.load(SineSource(441.0), "Sine", "", 0.0)
         deck.togglePlay()
@@ -544,6 +838,27 @@ class DeckTest {
             previous = x
         }
         assertTrue("largest step $worst", worst < 0.05f)
+    }
+
+    @Test
+    fun `tapping the beat corrects a grid without losing its precision`() {
+        deck.setGrid(127.93, 0.1, 8.0)
+        val beat = 60.0 / 127.93
+        deck.seekTo(0.1 + 20.5 * beat) // the DJ hears beats where the grid has its off-beats
+        deck.tapGrid(127.0) // a finger is a BPM off: the analysed tempo is kept
+        assertEquals(127.93, deck.grid.bpm, 0.0)
+        assertEquals("the grid moved half a beat, onto the taps", 0.0, BeatGrid.phaseError(deck.phase(), 0.0), 1e-9)
+        deck.tapGrid(128.5) // on the grid already: nothing moves
+        assertEquals(0.0, BeatGrid.phaseError(deck.phase(), 0.0), 1e-9)
+
+        deck.tapGrid(64.2) // the track is felt at half the tempo shown
+        assertEquals(127.93 / 2, deck.grid.bpm, 1e-9)
+
+        deck.setGrid(128.0, 0.0, 8.0)
+        deck.seekTo(7.3)
+        deck.tapGrid(100.0) // nothing like the analysis: the taps are the grid
+        assertEquals(100.0, deck.grid.bpm, 0.0)
+        assertEquals(7.3, deck.grid.anchorSec, 0.0)
     }
 
     @Test

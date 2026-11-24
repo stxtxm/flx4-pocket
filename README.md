@@ -14,14 +14,15 @@ Beat FX and a crossfader.
 
 Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
-> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 and 0.5.0
-> changes (loops, latency, folding panels, library) are covered by JVM tests (DSP, deck logic,
-> the MIDI address table, the real screen under Robolectric) but not yet by a
-> hardware check. See [docs/TESTING.md](docs/TESTING.md) for what must be
-> checked on a device, and [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for
-> what Android itself may refuse (four-channel USB audio, latency).
+> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 to 0.6.0
+> changes (loops, sync, beat grid, latency, recording, upright screen) are
+> covered by JVM tests (DSP, deck logic, the MIDI address table, the real
+> screen under Robolectric) but not yet by a hardware check. See
+> [docs/TESTING.md](docs/TESTING.md) for what must be checked on a device, and
+> [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for what Android itself may
+> refuse (bus power, four-channel USB audio, latency).
 
-## What is in 0.5.0
+## What is in 0.6.0
 
 **Mixing from the phone**
 
@@ -29,11 +30,18 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   of the screen, with the beat grid, loop region, cue point and hot cues. Drag
   a waveform to scratch or position the track, pinch to zoom; both decks share
   the zoom so their beats can be lined up by eye.
+- Each deck's tempo in large type, in the deck's colour, at the top left of
+  its waveform: the two tempos sit one above the other. The track list has a
+  tempo column.
+- On its side or upright, either way up: turn the phone and the screen
+  restacks without stopping anything (upright, the panels form a column and
+  the library puts its folders above its tracks). From Android 12 nothing sits
+  under the rounded corners or the camera.
 - **DECK A**, **MIXER** and **DECK B** (under the waveforms) fold their panel
   away; the others widen to fill the space, and with all three folded the
   waveforms take the whole screen. Drag the bar under the waveforms (outside
   its buttons, at the ⇕) to share the height differently. Both are
-  remembered.
+  remembered, for each orientation.
 - Track overview per deck with needle search.
 - Eight pads per deck in five modes: Hot Cue, Beat Loop, Beat Jump, Pad FX 1
   (echoes and slip loop rolls) and Pad FX 2 (low-cut echo, reverb, flanger,
@@ -41,27 +49,43 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 - CDJ-style CUE (hold to preview), PLAY, SYNC (long press: sync master),
   pitch-bend buttons, tempo fader with ±6 / ±10 / ±16 % / WIDE ranges, TAP.
 - KEY (keylock): the tempo changes, the pitch does not (WSOLA time-stretch).
-- A synced deck follows the master's tempo when it moves.
+- A beat grid that holds for a whole track: the tempo to a few thousandths of
+  a BPM, from the whole track, read between 89.5 and 179 BPM (174 is not 87).
+- Beat sync as rekordbox plays it: the synced deck takes the master's tempo
+  and lands on its beat when it starts and after a hot cue, a memory cue or a
+  search; a jog nudge is kept; SYNC off keeps the tempo; half and double tempo
+  sync at the same speed. The deck on air is the master: one being loaded or
+  cued under it never takes it along.
 - Loops as rekordbox plays them on the FLX4: IN, OUT, 4 BEAT / EXIT, halve /
-  double, beat loops of 1/4 to 32 beats. With quantize (Q) the points snap to
-  the grid; a loop never knocks the deck off the beat (closing it late wraps
-  back to the same place in the beat, a loop pressed just before a beat starts
-  on it), and the loop seam crossfades instead of clicking. IN or OUT during a
+  double, beat loops of 1/4 to 32 beats. The length shows on the 4 BEAT / EXIT
+  button and on the BEAT LOOP pads. With quantize (Q) the points snap to the
+  grid; a loop never knocks the deck off the beat (closing it late wraps back
+  to the same place in the beat, a loop pressed just before a beat starts on
+  it), and the loop seam crossfades instead of clicking. IN or OUT during a
   loop selects that point (it blinks): the jog, or a drag on the waveform,
   moves it until the button is pressed again. KEY keeps the seam seamless too.
+  With Q, a hot cue played on a running deck keeps the place in the beat.
 - Memory cues, as in rekordbox: SHIFT + CUE/LOOP CALL ► saves the cue point
-  (or the loop playing), CUE/LOOP CALL ◄ ► calls them in order (red marks on
-  the waveform), SHIFT + ◄ deletes the one called. On screen, ½ and 2× become
-  ◄ MEM / MEM ► when the deck has memory cues and no loop plays.
+  (or the loop playing), CUE/LOOP CALL ◄ ► jump to them in order and wait
+  there (red marks on the waveform), SHIFT + ◄ deletes the one called. On
+  screen, ½ and 2× become ◄ MEM / MEM ► when the deck has memory cues and no
+  loop plays.
 - Instant doubles: LOAD pressed twice puts the other deck's track on this
   deck, at the same place and speed, playing if it plays.
-- Low latency: PLAY, the loop buttons, TAP and FX ON act when the finger
-  lands, and the audio buffer is tuned down to the smallest the output takes
-  without glitches. The status line shows the measured output latency.
+- Low latency: the output runs at its own rate, which is what gets Android's
+  low-latency path, and on Android 14+ the FLX4's sound card is asked to run
+  at 44.1 kHz, the rate of the music. PLAY, the loop buttons, TAP and FX ON
+  act when the finger lands, and the audio buffer is tuned down to the
+  smallest the output takes without glitches. The status line shows the rate,
+  `fast` when the low-latency path was granted, and the delay.
+- **REC** records the mix to a 24-bit WAV file in `Music/FLX4 Pocket` (before
+  Android 10, the app's own Music folder): the master output sample for
+  sample, at the output's rate.
 - Mixer: trim, three-band EQ (-26 / +6 dB, like a DJM), filter, channel faders
   with level meters, equal-power crossfader, headphone cue buttons, master
-  peak limiter. Faders are ramped (no zipper noise) and pitched audio uses
-  cubic interpolation.
+  peak limiter. Faders are ramped (no zipper noise); audio read between two
+  samples (pitched, at another rate, after a jump) goes through a windowed
+  sinc that keeps the highs.
 - Beat FX on deck A, deck B or the master: echo, low-cut echo, reverb,
   flanger, phaser, trans, with beat length and depth.
 - Smart CFX: the filter knob becomes a resonant sweep with a synced echo.
@@ -107,7 +131,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 ## Not here yet
 
 - Sampler, Keyboard / Stems and Key Shift pad modes, Smart Fader.
-- Streaming services, recording, DVS.
+- Streaming services, DVS.
 
 ## Install (first time)
 
@@ -115,17 +139,20 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.5.0.apk
+   adb install -r FLX4-Pocket-0.6.0.apk
    ```
 3. Open FLX4 Pocket and add your music in the library: **+ FOLDER** takes a
    folder with its subfolders (add as many as you like), **+ TRACKS** single
    files. Tap an empty deck, then a track, to load it there; **DECK A** and
    **DECK B** on each track load it on either deck.
-4. Optional: connect the phone to the DDJ-FLX4's **device** USB-C port. The
-   phone can power the controller on its own (USB bus power, 5 V 500 mA); if
-   it does not light up or cuts out, also plug a USB power supply or power
-   bank into its **power** port. The status line turns green and shows which
-   output is in use. Turn the phone's media volume all the way up: Android
+4. Optional: connect the phone to the DDJ-FLX4's **device** USB-C port.
+   Pioneer's setup for a phone adds a 9 V 3 A USB power adapter or power bank
+   on the **power** port. The phone alone can power the controller, but on a
+   Pixel 9a a direct USB-C to USB-C cable lights it only some of the time,
+   while a USB hub has worked every time (a USB-C to USB-A adapter with a
+   USB-A to USB-C cable should too, but is untried; see
+   [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md)). The status line turns
+   green and shows which output is in use. Turn the phone's media volume all the way up: Android
    scales the USB output by it. Set the level with the FLX4's MASTER LEVEL
    knob.
 5. **AUDIO** lists the outputs and holds the master / headphones levels. On a
@@ -143,7 +170,7 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.5.0.apk
+adb install -r FLX4-Pocket-0.6.0.apk
 ```
 
 ## Controller workflow
@@ -153,9 +180,9 @@ adb install -r FLX4-Pocket-0.5.0.apk
 | PLAY / PAUSE | Play / pause; on an empty deck, open the library for it |
 | CUE | CDJ cue: set, preview while held, back to cue when playing |
 | SHIFT + CUE | Back to the start of the track |
-| BEAT SYNC / long press | Sync to the other deck / make this deck the master |
+| BEAT SYNC / long press | Sync to the other deck (tempo and beat, as in rekordbox), or release keeping the tempo / make this deck the master |
 | SHIFT + BEAT SYNC | Cycle the tempo range |
-| Tempo fader | Pitch, 14-bit, across the selected range. Soft takeover: after a sync, a touch change or a reconnection it takes over once it reaches the playing speed; until then an arrow next to the pitch shows which way to move it |
+| Tempo fader | Pitch, 14-bit, across the selected range. Ignored while the deck is synced. Soft takeover: after a sync, a touch change or a reconnection it takes over once it reaches the playing speed; until then an arrow next to the pitch shows which way to move it |
 | Jog top (touch) / side | Scratch / pitch bend |
 | SHIFT + jog | Fast search |
 | TRIM, EQ, channel fader, crossfader | Mixer |
@@ -166,7 +193,7 @@ adb install -r FLX4-Pocket-0.5.0.apk
 | IN / OUT | Loop in / loop out (the loop starts). During a loop: select that point, the jog moves it, press again to finish |
 | 4 BEAT/EXIT | 4-beat loop from here / leave the loop |
 | SHIFT + 4 BEAT/EXIT | Turn the last loop back on (active loop), in phase |
-| CUE/LOOP CALL ◄ ► | During a loop: halve / double it; otherwise call the previous / next memory cue |
+| CUE/LOOP CALL ◄ ► | During a loop: halve / double it; otherwise jump to the previous / next memory cue and wait there |
 | SHIFT + CUE/LOOP CALL ◄ / ► | Delete the memory cue called last / save the loop playing or the cue point as a memory cue |
 | HOT CUE, PAD FX1/2, BEAT JUMP, BEAT LOOP + pads | Pad modes |
 | SHIFT + hot-cue pad | Delete the hot cue |
@@ -174,7 +201,7 @@ adb install -r FLX4-Pocket-0.5.0.apk
 | Browse press / SHIFT + press | Move between the folders and the tracks, as in rekordbox / open, close the library |
 | LOAD 1 / 2 | Load the selected track and close the library; with the library closed, open it for that deck first. Twice: instant doubles |
 | SHIFT + LOAD 1 / 2 | Library sorted by BPM on the master's tempo / open, close the library |
-| SHIFT + channel CUE | Toggle quantize |
+| SHIFT + headphones CUE | Tap the tempo, as in rekordbox (quantize is the Q button on screen) |
 
 The complete address table is in [docs/DDJ-FLX4-MIDI.md](docs/DDJ-FLX4-MIDI.md).
 
@@ -182,7 +209,7 @@ The complete address table is in [docs/DDJ-FLX4-MIDI.md](docs/DDJ-FLX4-MIDI.md).
 
 Every release publishes `update.json`, the APK and its SHA-256 in GitHub
 Releases. The app checks on launch and then hourly; a new version turns the
-top-bar button amber. Tap it to read the notes and start the download, keep
+version button (bar under the waveforms) amber. Tap it to read the notes and start the download, keep
 mixing while the button counts up, and tap **INSTALL** when the music can
 stop. Android always shows its own confirmation, and the first time it asks
 to allow installs from FLX4 Pocket; the installation resumes by itself when
@@ -218,7 +245,8 @@ app/src/main/java/.../
   DeckPanel.kt       touch controls of one deck
   WaveformView.kt    scrolling waveform and track overview
   Controls.kt        knob, fader and meter views
-  AudioEngine.kt     shared-clock mixer, output routing, Beat FX
+  AudioEngine.kt     shared-clock mixer, output routing and rate, Beat FX
+  Recorder.kt        REC: the master output to 24-bit WAV files
   Deck.kt            transport, sync, loops, cues, scratch, EQ, pad FX
   Fx.kt              echo, reverb, flanger, phaser, trans
   AudioSource.kt     streaming MediaCodec decoder + PcmRing

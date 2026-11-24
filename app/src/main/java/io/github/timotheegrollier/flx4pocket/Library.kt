@@ -185,7 +185,9 @@ class AnalysisCache(context: Context) {
     private val waveforms = File(context.cacheDir, "waveforms")
 
     fun get(track: Track): BpmAnalyzer.Result? {
-        val parts = preferences.getString(key(track), null)?.split('|') ?: return null
+        // Grids from before 0.6 (under the bare key) drift: they label the library until the track is analysed again.
+        val parts = (preferences.getString(key(track) + GRID, null) ?: preferences.getString(key(track), null))
+            ?.split('|') ?: return null
         if (parts.size != 4) return null
         val bpm = parts[0].toDoubleOrNull() ?: return null
         val anchor = parts[1].toDoubleOrNull() ?: return null
@@ -195,10 +197,13 @@ class AnalysisCache(context: Context) {
         return BpmAnalyzer.Result(bpm, anchor, confidence, duration)
     }
 
+    /** False for a track never analysed, or only by the analyser of an older version. */
+    fun analysed(track: Track): Boolean = preferences.contains(key(track) + GRID)
+
     fun put(track: Track, result: BpmAnalyzer.Result) {
         preferences.edit()
             .putString(
-                key(track),
+                key(track) + GRID,
                 "${result.bpm}|${result.anchorSec}|${result.confidence}|${result.durationSec}"
             )
             .apply()
@@ -233,6 +238,10 @@ class AnalysisCache(context: Context) {
     }
 
     private fun key(track: Track): String = "${track.uri}|${track.lastModified}"
+
+    private companion object {
+        const val GRID = "|grid2"
+    }
 }
 
 /** One decode pass over a track that yields both its beat grid and its waveform. */
@@ -241,8 +250,8 @@ object TrackAnalyzer {
     /**
      * Blocking; run it on a worker thread. [onWaveform] receives the waveform
      * as soon as it exists (it keeps filling while the UI draws it), [onGrid]
-     * the beat grid once the first minute has been heard. Both may be called
-     * immediately from the cache.
+     * a first beat grid once a minute has been heard, then the final one from
+     * the whole track. Both may be called immediately from the cache.
      */
     fun analyze(
         context: Context,
@@ -252,13 +261,14 @@ object TrackAnalyzer {
         onWaveform: (Waveform) -> Unit,
         onGrid: (BpmAnalyzer.Result) -> Unit
     ) {
-        val cachedGrid = cache.get(track)?.also(onGrid)
+        val cachedGrid = cache.get(track)?.also(onGrid).takeIf { cache.analysed(track) }
         val cachedWave = Waveform.read(cache.waveformFile(track))?.also(onWaveform)
         if (cachedGrid != null && cachedWave != null) return
 
         var builder: WaveformBuilder? = null
         var onsets: BpmAnalyzer.Onsets? = null
         var gridDone = cachedGrid != null
+        var previewed = false
         var duration = 0.0
         fun finishGrid() {
             gridDone = true
@@ -280,6 +290,11 @@ object TrackAnalyzer {
             if (!gridDone) {
                 val energy = onsets ?: BpmAnalyzer.Onsets(sampleRate).also { onsets = it }
                 energy.add(stereo, frames)
+                // A first grid after a minute, so the deck can sync while the rest decodes.
+                if (!previewed && energy.seconds >= PREVIEW_SECONDS) {
+                    previewed = true
+                    energy.estimate()?.let { onGrid(BpmAnalyzer.Result(it.bpm, it.anchorSec, it.confidence, durationSec)) }
+                }
                 if (energy.seconds >= GRID_SECONDS) finishGrid()
             }
             !cancelled() && (cachedWave == null || !gridDone)
@@ -291,5 +306,8 @@ object TrackAnalyzer {
         if (decoded) runCatching { waveform.write(cache.waveformFile(track)) }
     }
 
-    private const val GRID_SECONDS = 60.0
+    private const val PREVIEW_SECONDS = 60.0
+
+    /** The grid comes from the whole track (a long intro no longer spoils it); capped so a two-hour mix stays cheap. */
+    private const val GRID_SECONDS = 600.0
 }

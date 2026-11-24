@@ -38,7 +38,7 @@ object MidiMap {
     const val NOTE_MEMORY_DELETE = 0x3E // SHIFT + CUE/LOOP CALL ◁
     const val NOTE_MEMORY_SAVE = 0x3D // SHIFT + CUE/LOOP CALL ▷
     const val NOTE_CUE_CHANNEL = 0x54
-    const val NOTE_QUANTIZE = 0x68 // SHIFT + channel CUE
+    const val NOTE_TAP = 0x68 // SHIFT + headphones CUE
     const val NOTE_JOG_TOUCH = 0x36
     const val NOTE_JOG_SHIFT_TOUCH = 0x67
 
