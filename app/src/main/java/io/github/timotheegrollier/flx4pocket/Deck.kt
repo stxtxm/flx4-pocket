@@ -27,6 +27,11 @@ class Deck(val index: Int) {
     @Volatile
     var artist: String = ""
         private set
+
+    /** The key of the loaded track, from the library's analysis; null until it is known. */
+    @Volatile
+    var key: MusicalKey? = null
+        private set
     @Volatile
     var durationSec: Double = 0.0
         private set
@@ -228,6 +233,7 @@ class Deck(val index: Int) {
         title = ""
         artist = ""
         durationSec = 0.0
+        key = null
         waveform = null
         playing = false
         cursor = 0.0
@@ -396,6 +402,10 @@ class Deck(val index: Int) {
     // ------------------------------------------------------------------
 
     @Synchronized
+    fun setKey(key: MusicalKey?) {
+        this.key = key
+    }
+
     fun setGrid(bpm: Double, anchorSec: Double, confidence: Double) {
         grid = BeatGrid(bpm = bpm.coerceIn(0.0, 300.0), anchorSec = anchorSec)
         gridConfidence = confidence

@@ -250,8 +250,11 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
             when {
                 text != null -> text
                 !hasTrack -> "Tap here to load a track"
-                deck.artist.isBlank() -> deck.title
-                else -> "${deck.title}  ·  ${deck.artist}"
+                else -> listOfNotNull(
+                    deck.title,
+                    deck.artist.takeIf { it.isNotBlank() },
+                    deck.key?.let { "${it.camelot} ${it.name}" }
+                ).joinToString("  ·  ")
             }
         )
         title.setTextColor(if (text != null && messageIsError) danger else if (hasTrack) textColor else textDim)

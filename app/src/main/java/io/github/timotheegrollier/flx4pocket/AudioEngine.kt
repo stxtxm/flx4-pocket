@@ -218,33 +218,59 @@ class AudioEngine(context: Context) {
      * run at are tried, the likeliest first, and the first one that gets that path is kept.
      */
     private fun openTrack(channels: Int, target: AudioDeviceInfo?): AudioTrack {
+        val musicRate = target != null && mixAtMusicRate(target, channels)
         val likely = when {
-            target != null && mixAtMusicRate(target, channels) -> Deck.SAMPLE_RATE
+            musicRate -> Deck.SAMPLE_RATE
             // Android runs a USB output at the highest rate the interface offers.
             target != null -> target.sampleRates.filter { it in RATES }.maxOrNull()
             else -> audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()?.takeIf { it in RATES }
         } ?: RATES[0]
         var kept: AudioTrack? = null
         var failure: Exception? = null
-        for (rate in listOf(likely) + RATES.filter { it != likely }) {
+
+        /** Opens one rate; returns it only if Android granted the fast path. */
+        fun tryRate(rate: Int): AudioTrack? {
             val out = try {
                 buildTrack(channels, target, rate)
             } catch (e: Exception) {
                 failure = e
-                continue
+                return null
             }
             try {
                 out.play() // routes it to the output, which settles what it is granted
             } catch (e: Exception) {
                 failure = e
                 out.release()
-                continue
+                return null
             }
-            if (out.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) {
-                kept?.release()
-                return out
-            }
+            if (out.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) return out
             if (kept == null) kept = out else out.release()
+            return null
+        }
+
+        for (rate in listOf(likely) + RATES.filter { it != likely }) {
+            tryRate(rate)?.let {
+                kept?.release()
+                return it
+            }
+        }
+        // Asking the USB mixer for 44.1 kHz is only worth it if the stream then gets the fast
+        // path. On an output that refuses it, the forced rate is worse than the default: the
+        // stream is resampled and misses the fast mixer. Put the default back and try again.
+        val usbTarget = target
+        if (musicRate && usbTarget != null) {
+            try {
+                audioManager.clearPreferredMixerAttributes(MEDIA, usbTarget)
+                Log.i(TAG, "44.1 kHz mixer took no fast path: back to the output's own rate")
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot clear the preferred mixer rate", e)
+            }
+            for (rate in RATES) {
+                tryRate(rate)?.let {
+                    kept?.release()
+                    return it
+                }
+            }
         }
         return kept ?: throw failure ?: IllegalStateException("no output")
     }
@@ -279,20 +305,33 @@ class AudioEngine(context: Context) {
                 else setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
             }
             .build()
-        val stereoBytes = AudioTrack.getMinBufferSize(
-            rate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT
-        )
+        // The minimum is a recommendation for a glitch-free stream, not a floor: a streaming
+        // track may run on the two blocks the mixer writes at a time. The capacity leaves room
+        // to grow after an underrun. (It was multiplied by the channel count twice, so a
+        // four-channel output started on a buffer several times the minimum.)
+        val channelMask = if (channels == 4) AudioFormat.CHANNEL_OUT_QUAD else AudioFormat.CHANNEL_OUT_STEREO
+        val minFrames = AudioTrack.getMinBufferSize(rate, channelMask, AudioFormat.ENCODING_PCM_FLOAT)
+            .takeIf { it > 0 }?.div(4 * channels) ?: BLOCK * MIN_BUFFER_BLOCKS
+        val capacityFrames = max(minFrames, BLOCK * MAX_BUFFER_BLOCKS)
         val out = AudioTrack.Builder()
             .setAudioAttributes(MEDIA)
             .setAudioFormat(format)
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(max(stereoBytes, BLOCK * 8) * channels)
+            .setBufferSizeInBytes(capacityFrames * 4 * channels)
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
         if (target != null && !out.setPreferredDevice(target)) {
             out.release()
             throw IllegalStateException("${target.productName} refused the stream")
         }
+        // Before play(), never after: a resize can be refused on a running track, which used
+        // to leave its whole (large) capacity in the path and made the mix sound far too late.
+        val wanted = BLOCK * MIN_BUFFER_BLOCKS
+        val tuned = out.setBufferSizeInFrames(wanted)
+        Log.i(
+            TAG,
+            "Stream $rate Hz, $channels ch: ${if (tuned > 0) tuned else out.bufferSizeInFrames} of $capacityFrames frames"
+        )
         return out
     }
 
@@ -329,10 +368,18 @@ class AudioEngine(context: Context) {
         var lastGainA = 0f
         var lastGainB = 0f
 
-        // Latency tuning (as in Oboe): start with two blocks of buffer and add a block
-        // after each underrun, so the mix plays as soon after a move as this output allows.
-        var bufferFrames = out.setBufferSizeInFrames(BLOCK * 2).takeIf { it > 0 } ?: out.bufferSizeInFrames
-        Log.i(TAG, "Output $rate Hz, $channels ch, low latency $lowLatency, buffer $bufferFrames of ${out.bufferCapacityInFrames}")
+        // Latency tuning (as in Oboe): play on two blocks of buffer and add a block after each
+        // underrun, so the mix plays as soon after a move as this output allows. The stream was
+        // already tuned before play(); setting it again here covers an output that reset it when
+        // the track started. Growth stops at MAX_BUFFER_BLOCKS: a bad stretch must not turn the
+        // mixer into a delayed echo for the rest of the set.
+        var bufferFrames = out.setBufferSizeInFrames(BLOCK * MIN_BUFFER_BLOCKS).takeIf { it > 0 }
+            ?: out.bufferSizeInFrames
+        val maxBufferFrames = minOf(out.bufferCapacityInFrames, BLOCK * MAX_BUFFER_BLOCKS)
+        Log.i(
+            TAG,
+            "Output $rate Hz, $channels ch, low latency $lowLatency, buffer $bufferFrames of $maxBufferFrames frames"
+        )
         var underruns = out.underrunCount
         val stamp = AudioTimestamp()
         var framesWritten = 0L
@@ -451,9 +498,13 @@ class AudioEngine(context: Context) {
                 break
             }
             framesWritten += BLOCK
-            if (out.underrunCount > underruns && bufferFrames < out.bufferCapacityInFrames) {
+            if (out.underrunCount > underruns) {
                 underruns = out.underrunCount
-                bufferFrames = out.setBufferSizeInFrames(bufferFrames + BLOCK).takeIf { it > 0 } ?: bufferFrames
+                if (bufferFrames < maxBufferFrames) {
+                    val grown = minOf(maxBufferFrames, bufferFrames + BLOCK)
+                    bufferFrames = out.setBufferSizeInFrames(grown).takeIf { it > 0 } ?: bufferFrames
+                    Log.w(TAG, "Underrun: buffer grown to $bufferFrames frames")
+                }
             }
             if (framesWritten % (BLOCK * 64) == 0L && out.getTimestamp(stamp)) {
                 val heard = stamp.framePosition + (System.nanoTime() - stamp.nanoTime) * rate / 1_000_000_000L
@@ -468,6 +519,10 @@ class AudioEngine(context: Context) {
         const val FX_DECK_B = 1
         const val FX_MASTER = 2
         private const val BLOCK = 256
+
+        /** Blocks of buffer the mixer starts on and may grow to after underruns. */
+        private const val MIN_BUFFER_BLOCKS = 2
+        private const val MAX_BUFFER_BLOCKS = 6
 
         /**
          * How fast the meters fall after a peak. It used to be about 160 dB/s: between two

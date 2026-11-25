@@ -14,15 +14,15 @@ Beat FX and a crossfader.
 
 Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 
-> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 to 0.6.1
-> changes (loops, sync, beat grid, latency, recording, upright screen) are
+> **Status:** 0.3.0 runs on a Pixel 9a with a DDJ-FLX4. The 0.4.0 to 0.7.0
+> changes (loops, sync, beat grid, latency, recording, upright screen, keys) are
 > covered by JVM tests (DSP, deck logic, the MIDI address table, the real
 > screen under Robolectric) but not yet by a hardware check. See
 > [docs/TESTING.md](docs/TESTING.md) for what must be checked on a device, and
 > [docs/ANDROID-LIMITS.md](docs/ANDROID-LIMITS.md) for what Android itself may
 > refuse (bus power, four-channel USB audio, latency).
 
-## What is in 0.6.1
+## What is in 0.7.0
 
 **Mixing from the phone**
 
@@ -53,14 +53,13 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   a BPM, from the whole track, read in one octave from 70 to 180 BPM (174 is
   not 87, and 80 stays 80). A wrong octave is one long press away: **Halve /
   Double the BPM** in the track menu.
-- Beat sync as rekordbox: press SYNC and the deck takes the master's tempo
-  and stays locked to its grid — at once on a playing deck, at PLAY on a
-  stopped one, and again after a seek, a hot cue or a refined grid. A jog or
-  a scratch bends it while you hold it; the beat comes back when you let go.
-  SYNC is lit on both decks while one follows the other, and SYNC off keeps
-  the tempo. Half and double tempo sync at the same speed (80 against 160).
-  The deck on air is the master: one being loaded or cued under it never
-  takes it along, unless the DJ synced it there.
+- Beat sync as rekordbox: press SYNC and the deck follows the other deck's
+  tempo and stays locked to its grid — at once, whether it is playing or
+  stopped, at PLAY, and again after a seek, a hot cue or a refined grid. A
+  jog or a scratch bends it while you hold it; the beat comes back when you
+  let go. SYNC is lit on both decks while one follows the other, and SYNC off
+  keeps the tempo. Half and double tempo sync at the same speed (80 against
+  160). Long press SYNC makes that deck the sync master by hand.
 - Loops as rekordbox plays them on the FLX4: IN, OUT, 4 BEAT / EXIT, halve /
   double, beat loops of 1/4 to 32 beats. The length shows on the 4 BEAT / EXIT
   button and on the BEAT LOOP pads. With quantize (Q) the points snap to the
@@ -95,6 +94,13 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
 - Beat FX on deck A, deck B or the master: echo, low-cut echo, reverb,
   flanger, phaser, trans, with beat length and depth.
 - Smart CFX: the filter knob becomes a resonant sweep with a synced echo.
+- Track keys: each track is analysed for its key and shown in Camelot notation
+  (`8A`, `11B`) beside its tempo, and on the deck with its title. Once a track
+  is analysed the key stays with it; a playing deck pauses the analysis.
+  The key is an estimate: check it against rekordbox or your ear.
+- Track tags: the list shows the title, artist, album and codec (MP3, AAC,
+  FLAC, WAV, AIFF...) of each file, and the format line (sample rate, channels,
+  bitrate) is read from the file. SEARCH matches artist, album and genre too.
 - Library without storage permission: **+ FOLDER** adds a music folder with
   its subfolders (as many folders as you like), **+ TRACKS** adds single
   files. A folder column shows them as a tree with track counts, next to the
@@ -148,7 +154,7 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
    [Releases](https://github.com/stxtxm/flx4-pocket/releases/latest).
 2. Either open it on the phone and allow installation from that source, or:
    ```bash
-   adb install -r FLX4-Pocket-0.6.1.apk
+   adb install -r FLX4-Pocket-0.7.0.apk
    ```
 3. Open FLX4 Pocket and add your music in the library: **+ FOLDER** takes a
    folder with its subfolders (add as many as you like), **+ TRACKS** single
@@ -185,7 +191,7 @@ Copy the APK to the Pixel and open it there, or install it from this repository
 with adb:
 
 ```bash
-adb install -r FLX4-Pocket-0.6.1.apk
+adb install -r FLX4-Pocket-0.7.0.apk
 ```
 
 ## Controller workflow
@@ -195,7 +201,7 @@ adb install -r FLX4-Pocket-0.6.1.apk
 | PLAY / PAUSE | Play / pause; on an empty deck, open the library for it |
 | CUE | CDJ cue: set, preview while held, back to cue when playing |
 | SHIFT + CUE | Back to the start of the track |
-| BEAT SYNC / long press | Sync to the other deck's tempo (pressed while both decks play, also onto its beat — and PLAY lands there too; afterwards the deck plays from where you put it), or release keeping the tempo / make this deck the master |
+| BEAT SYNC / long press | Sync this deck to the other deck's tempo and grid, playing or stopped, or release keeping the tempo / make this deck the master |
 | SHIFT + BEAT SYNC | Cycle the tempo range |
 | Tempo fader | Pitch, 14-bit, across the selected range. Ignored while the deck is synced. Soft takeover: after a sync, a touch change or a reconnection it takes over once it reaches the playing speed; until then an arrow next to the pitch shows which way to move it |
 | Jog top (touch) / side | Scratch / pitch bend |
@@ -269,6 +275,8 @@ app/src/main/java/.../
   Waveform.kt        three-band waveform data, builder, cache file
   BpmAnalyzer.kt     onset autocorrelation
   Library.kt         folder scan, analysis cache, track analyzer
+  MusicalKey.kt      track key: chroma, Krumhansl-Kessler estimate, Camelot code
+  TrackInfo.kt       tags and audio format of a file, cached
   Flx4Protocol.kt    MIDI bytes -> semantic events (pure, tested)
   Flx4Midi.kt        USB MIDI transport and LEDs
   MidiMap.kt         FLX4 addresses

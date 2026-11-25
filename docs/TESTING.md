@@ -18,6 +18,8 @@ All tests run on the JVM; no device or emulator is needed.
 | `TrackBufferTest` | Whole-track buffer: decoded frames read back, undecoded ones wait, capacity |
 | `FxTest` | Bypass when off, echo timing and tail, trans gating, stability of every effect |
 | `LibraryTest` | Folder column order (parents before children, lookalike names apart), counts, which tracks a folder holds |
+| `MusicalKeyTest` | Camelot codes around the wheel, the key cache format, silence has no key, synthetic A major and C minor triads read through the real chroma path |
+| `TrackInfoTest` | Tags and format survive the cache (separators included), the format line (`MP3 · 44.1 kHz · stereo · 320 kbps`), codec names of compressed and uncompressed files |
 | `WaveformTest` | Resolution, band separation, overflow, cache-file round trip |
 | `PcmRingTest` | Interpolation accuracy at 5 and 15 kHz, whole frames read sample for sample, seek reset, eviction over many capacities, decoder throttling |
 | `DspTest` | Biquads, mixer curves, EQ range, master limiter, soft clip, meters in decibels, the FLX4 level LED bands (-24 / -12 / -6 / -3 / 0 dBFS) |
@@ -79,11 +81,12 @@ Beat grid and sync (two tracks you know, played for several minutes)
     grid for a moment, then the new one. Long-press a track read at the wrong
     octave: Halve / Double the BPM fixes it, tab and playing deck included.
 14. SYNC on a paused deck, then PLAY anywhere: it lands on the master's beat
-    at once, with no second SYNC press, and stays there. SYNC on the deck on
-    air, then on the other, then start them in either order: both stay on the
-    beat. A hot cue or a needle search on the synced deck lands on the beat
-    again. Two decks put on the beat still sound as one after three minutes;
-    so do an 80 BPM track and a 160 BPM one.
+    at once, with no second SYNC press, and stays there. Press SYNC on either
+    deck, in either order, playing or stopped: that deck's SYNC LED lights, it
+    follows the other deck, and the pair stays on the beat. A hot cue or a
+    needle search on the synced deck lands on the beat again. Two decks put on
+    the beat still sound as one after three minutes; so do an 80 BPM track and
+    a 160 BPM one.
 15. A jog nudge on the synced deck is felt while you hold it, and the beats
     are back together the moment you let go; a loop keeps playing inside
     itself. SYNC off, or SYNC on the other deck, changes no tempo. With SYNC
@@ -172,6 +175,14 @@ App
 41. The dark theme switching (or a keyboard being plugged in) while a deck
     plays does not stop the music.
 42. In-app update from one signed release to the next.
+43. Track keys: after a scan the list fills with tags (title, artist, album,
+    codec in the row) and Camelot keys (`8A`, `11B`...) appear once each track
+    is analysed. Check a few against a reference (rekordbox's key column, or
+    your ear): a major/minor confusion or a semitone off is the known weak
+    spot of a chroma estimate on tracks with a strong bassline or a key change.
+    The deck title shows the key once the track is loaded. Playing a deck
+    pauses the key analysis; it resumes when the decks are quiet.
+44. SEARCH matches a track's artist, album and genre, not only its file name.
 
 Record the phone model, Android build and FLX4 firmware in any report.
 

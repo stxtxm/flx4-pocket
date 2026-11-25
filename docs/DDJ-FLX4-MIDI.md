@@ -143,15 +143,15 @@ always applies. Not yet verified on hardware.
 ## Sync, loops and tap
 
 - **BEAT SYNC** matches the tempo (87 against 174 BPM counts as the same
-  tempo, and so do 80 and 160) and locks the deck to the master's grid, as on
-  rekordbox: at once on a playing deck, at PLAY on a stopped one, and again
-  after a seek or a hot cue. A jog or a scratch bends it while it is held;
-  the beat comes back on release. The button is lit on both decks while one
-  follows the other. SYNC off keeps the tempo.
-- **Sync master**: the deck the other one was synced to. When it stops, the
-  deck still playing takes the role, so the deck on air never follows a track
-  being loaded or cued — unless the DJ synced it to it, which keeps the pair
-  together in either start order. The long press hands it over by hand.
+  tempo, and so do 80 and 160) and locks the deck to the other deck's grid, as
+  on rekordbox: at once, playing or stopped, at PLAY, and again after a seek or
+  a hot cue. A jog or a scratch bends it while it is held; the beat comes back
+  on release. The button is lit on both decks while one follows the other. SYNC
+  off keeps the tempo.
+- **Sync master**: the deck the other one follows. A deck the DJ synced keeps
+  following the master the DJ picked, so the pair can be armed in either start
+  order; when the master stops by itself, the deck still playing takes the
+  role. The long press hands it over by hand.
 - **Quantize** (Q on screen): loop points and new hot cues snap to the grid,
   and a hot cue played on a running deck lands as far into the beat as the
   deck was, so the rhythm goes on.

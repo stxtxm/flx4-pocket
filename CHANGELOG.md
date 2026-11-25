@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.7.0
+
+Track keys and tags in the library, and SYNC that follows the other deck
+whether it plays or not.
+
+### Added
+
+- Track key: each analysed track shows its key in Camelot notation (`8A` for
+  A minor, `11B` for B major) beside its tempo in the list, and on the deck
+  next to its title. The key is estimated from the track's pitch content
+  (chroma against the Krumhansl-Kessler profiles), in the background while the
+  library is read; the analysis pauses while a deck plays, and it is kept per
+  track. Check it against rekordbox or your ear: it is an estimate.
+- Track tags: the list shows each track's title, artist, album and codec from
+  the file. The format line (sample rate, channels, bitrate, for example
+  `MP3 · 44.1 kHz · stereo · 320 kbps`) is read from the file and kept per track.
+- SEARCH matches a track's artist, album and genre, not only its file name.
+
+### Changed
+
+- SYNC follows the other deck, playing or stopped, so the pair can be armed in
+  either start order. The SYNC button lights on the synced deck at once, and
+  on the master while the other deck follows it, as on rekordbox; a long press
+  still makes that deck the master by hand. The "nothing to sync to" refusal
+  is gone.
+
+### Fixed
+
+- Pressing SYNC on the deck on air no longer leaves it as master with its SYNC
+  LED off: SYNC now engages sync on the pressed deck and makes the other deck
+  master, so the LED lights and the pair stays in time.
+- Audio output: the output buffer no longer starts oversized, and the app falls
+  back when a forced 44.1 kHz USB mixer does not get Android's fast path, instead
+  of keeping a resampled, high-latency stream. Check the status line for `fast`
+  and the reported ms.
+
 ## 0.6.3
 
 SYNC keeps a deck on the master's beat by itself, as rekordbox does, whichever

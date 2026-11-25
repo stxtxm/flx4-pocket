@@ -239,11 +239,31 @@ class AnalysisCache(context: Context) {
             .apply()
     }
 
+    /** The tags and format read from the file, null until the library has read it. */
+    fun info(track: Track): TrackInfo? =
+        preferences.getString(key(track) + INFO, null)?.let(TrackInfo::decode)
+
+    fun putInfo(track: Track, info: TrackInfo) {
+        preferences.edit().putString(key(track) + INFO, info.encode()).apply()
+    }
+
+    /** True once the key has been analysed, even when no key could be found. */
+    fun keyAnalysed(track: Track): Boolean = preferences.contains(key(track) + KEY)
+
+    fun musicalKey(track: Track): MusicalKey? =
+        preferences.getString(key(track) + KEY, null)?.let(MusicalKey::decode)
+
+    fun putMusicalKey(track: Track, key: MusicalKey?) {
+        preferences.edit().putString(key(track) + KEY, key?.encode().orEmpty()).apply()
+    }
+
     private fun key(track: Track): String = "${track.uri}|${track.lastModified}"
 
     private companion object {
         const val GRID = "|grid3"
         const val LEGACY_GRID = "|grid2"
+        const val INFO = "|info"
+        const val KEY = "|key"
     }
 }
 

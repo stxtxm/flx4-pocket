@@ -165,7 +165,7 @@ class MainActivityTest {
     }
 
     @Test
-    fun `SYNC on the deck on air makes it the master, and the other follows it`() {
+    fun `SYNC on either deck makes it follow the other, playing or not`() {
         val activity = launch().get()
         val engine = activity.engine
         val onAir = engine.decks[1]
@@ -175,14 +175,16 @@ class MainActivityTest {
         onAir.togglePlay()
         eventually("the playing deck takes the master role") { engine.masterDeckIndex == 1 }
 
-        activity.onSync(1) // SYNC on the deck on air: it holds the tempo, as on Pioneer gear
-        assertEquals(1, engine.masterDeckIndex)
-        assertFalse("the master follows nobody", onAir.syncEnabled)
+        activity.onSync(1) // SYNC on the deck on air: it follows the other deck, as on rekordbox
+        assertTrue("the deck on air takes the sync", onAir.syncEnabled)
+        assertEquals("and the stopped deck becomes the master", 0, engine.masterDeckIndex)
+        assertEquals("on the master's tempo", 124.0, onAir.effectiveBpm(), 0.001)
 
-        activity.onSync(0) // SYNC on the stopped deck: it follows the master, playing or not
-        assertTrue(next.syncEnabled)
-        assertEquals("at the master's tempo", 126.0, next.effectiveBpm(), 0.001)
-        assertEquals("and the master stays the master", 1, engine.masterDeckIndex)
+        activity.onSync(0) // SYNC on the master swaps the roles
+        assertTrue("the other deck follows now", next.syncEnabled)
+        assertFalse("the deck that was following handed the master role over", onAir.syncEnabled)
+        assertEquals("and owns the master role", 1, engine.masterDeckIndex)
+        assertEquals("at the tempo the pair was playing", 124.0, next.effectiveBpm(), 0.001)
     }
 
     @Test

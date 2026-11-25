@@ -29,9 +29,9 @@ FLX4 MIDI ─┘   (wiring)        │  trim, EQ, filter, pad FX per deck
 
 | Layer | Files | Android-free |
 | --- | --- | --- |
-| DSP and deck logic | `Deck`, `Fx`, `Dsp`, `MixerMath`, `BeatGrid`, `BpmAnalyzer`, `Waveform`, `PcmRing`, `Recorder` | yes |
+| DSP and deck logic | `Deck`, `Fx`, `Dsp`, `MixerMath`, `BeatGrid`, `BpmAnalyzer`, `MusicalKey` (`ChromaAccumulator`), `Waveform`, `PcmRing`, `Recorder` | yes |
 | Controller protocol | `Flx4Protocol` (`Flx4Decoder`), `MidiMap` | yes |
-| Platform I/O | `AudioEngine`, `AudioSource`, `PcmDecoder`, `Flx4Midi`, `Library`, `Update*` | no |
+| Platform I/O | `AudioEngine`, `AudioSource`, `PcmDecoder`, `Flx4Midi`, `Library`, `TrackInfo`, `Update*` | no |
 | Screen | `MainActivity`, `DeckPanel`, `WaveformView`, `Controls`, `UpdateUi` | no |
 
 The first two layers hold all the behaviour and are what the JVM tests

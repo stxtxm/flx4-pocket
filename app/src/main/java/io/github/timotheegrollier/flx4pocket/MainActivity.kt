@@ -52,6 +52,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -116,6 +118,13 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private val trackAdapter = TrackAdapter()
 
     private val loadTokens = AtomicIntegerArray(2)
+
+    /** Reads the tags and finds the keys of the library, one track at a time, off the audio path. */
+    private val infoWorker = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "library-info").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+    }
+    private val libraryGeneration = AtomicInteger()
+    private val rowsRefreshQueued = AtomicBoolean()
     private val loadedTracks = arrayOfNulls<Track>(2)
 
     /** Where each FLX4 tempo fader sits (-1..1, + at the bottom), NaN until it moves. */
@@ -639,20 +648,25 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         when {
             d.syncEnabled -> d.releaseSync()
             !d.grid.valid -> toast("This deck has no BPM yet — wait for the analysis or TAP the tempo")
-            // On air: SYNC makes this deck the tempo master, and the other follows it once SYNC
-            // is on there, playing or not, so the pair can be armed in either order.
-            d.playing -> engine.setMasterDeck(deck)
             !other.grid.valid -> toast("The other deck has no BPM yet")
             else -> {
-                engine.setMasterDeck(1 - deck)
-                d.engageSync(other)
+                // SYNC makes this deck the follower, also when it is the one on air: the other
+                // deck becomes the master. That is how rekordbox arms a pair in either start
+                // order, and the button lights as soon as it is pressed instead of only after
+                // the other deck syncs. A long press still hands the master role over by hand.
+                // Engage first: in the window before this, the mixer would see a playing deck
+                // that is not synced under a stopped master and hand the role back to it.
+                if (d.engageSync(other)) engine.setMasterDeck(1 - deck)
+                else toast("This deck cannot sync — load a track")
             }
         }
+        updateLeds() // the button answers at once, not on the next screen refresh
     }
 
     override fun onMaster(deck: Int) {
         engine.setMasterDeck(deck)
         toast("Deck ${DECK_NAMES[deck]} is the sync master")
+        updateLeds()
     }
 
     override fun onTap(deck: Int) {
@@ -714,6 +728,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             }
             else -> if (down) onPress(deck, d, button)
         }
+        updateLeds() // the hardware answers at once, not on the next screen refresh
     }
 
     private fun onPress(deck: Int, d: Deck?, button: Flx4Button) {
@@ -826,16 +841,19 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Deck.PAD_KEY_SHIFT -> toast(getString(R.string.not_supported, "Key Shift"))
             else -> engine.decks[deck].padMode = mode
         }
+        updateLeds()
     }
 
     override fun onPad(deck: Int, mode: Int, pad: Int, shift: Boolean, down: Boolean) {
         val d = engine.decks[deck]
         if (!down) {
             d.padUp(mode, pad)
+            updateLeds()
             return
         }
         d.padDown(mode, pad, shift)
         if (mode == Deck.PAD_HOT_CUE) onCuesChanged(deck)
+        updateLeds()
     }
 
     override fun onBrowse(delta: Int, shift: Boolean) {
@@ -993,6 +1011,63 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         tracks.clear()
         tracks.addAll(found)
         refreshFolders()
+        readLibrary()
+    }
+
+    /**
+     * Reads the tags of every track, then finds its key. A key is not decoded
+     * while a deck plays: decoding a whole track would starve the audio thread.
+     */
+    private fun readLibrary() {
+        val generation = libraryGeneration.incrementAndGet()
+        val snapshot = tracks.toList()
+        val current = { libraryGeneration.get() == generation }
+        val playing = { engine.decks.any { it.playing } }
+        infoWorker.execute {
+            for (track in snapshot) {
+                if (!current()) return@execute
+                if (cache.info(track) == null) {
+                    cache.putInfo(track, TrackInfo.read(this, track.uri, track.name))
+                    refreshRows(generation)
+                }
+            }
+            for (track in snapshot) {
+                while (current() && !cache.keyAnalysed(track)) {
+                    if (playing()) {
+                        Thread.sleep(1000)
+                        continue
+                    }
+                    // Null when stopped part way: the loop tries again once the decks are quiet.
+                    val analysis = MusicalKeys.analyze(this, track.uri) { !current() || playing() } ?: continue
+                    cache.putMusicalKey(track, analysis.key)
+                    ui.post {
+                        engine.decks.forEachIndexed { index, deck ->
+                            if (loadedTracks[index] == track) deck.setKey(analysis.key)
+                        }
+                    }
+                    refreshRows(generation)
+                }
+                if (!current()) return@execute
+            }
+        }
+    }
+
+    /** Redraws the rows once per burst of updates from [readLibrary], on the UI thread. */
+    private fun refreshRows(generation: Int) {
+        if (!rowsRefreshQueued.compareAndSet(false, true)) return
+        ui.post {
+            rowsRefreshQueued.set(false)
+            if (libraryGeneration.get() != generation) return@post
+            if (librarySearch.text.isNullOrEmpty()) {
+                trackAdapter.notifyDataSetChanged()
+            } else {
+                // A search may match the new tags: filter again, keeping the cursor on the same track.
+                val kept = visibleTracks.getOrNull(selectedTrack)
+                filterTracks()
+                if (visibleTracks.isNotEmpty()) selectedTrack = visibleTracks.indexOf(kept).coerceAtLeast(0)
+                trackAdapter.notifyDataSetChanged()
+            }
+        }
     }
 
     /** Folders, then playlists; stays on the row that was selected if it still exists. */
@@ -1005,6 +1080,13 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             .coerceAtLeast(0)
         folderAdapter.notifyDataSetChanged()
         filterTracks()
+    }
+
+    /** The search reads the file name and the tags: title, artist, album and genre. */
+    private fun matchesSearch(track: Track, query: String): Boolean {
+        if (query.isEmpty() || track.name.contains(query, ignoreCase = true)) return true
+        val info = cache.info(track) ?: return false
+        return listOf(info.title, info.artist, info.album, info.genre).any { it.contains(query, ignoreCase = true) }
     }
 
     private fun bpmOf(track: Track): Double = cache.get(track)?.bpm ?: Double.MAX_VALUE
@@ -1127,7 +1209,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             val byUri = tracks.associateBy { it.uri.toString() }
             playlists[name].orEmpty().mapNotNull { byUri[it] } // in play order
         } ?: tracks.filter { Library.inFolder(it.folder, row?.path.orEmpty()) }
-        visibleTracks = list.filter { query.isEmpty() || it.name.contains(query, ignoreCase = true) }
+        visibleTracks = list.filter { matchesSearch(it, query) }
         if (sortByBpm) visibleTracks = visibleTracks.sortedBy(::bpmOf) // unanalysed tracks last
         if (sortByBpm) sortButton.tint(getColor(R.color.accent), getColor(R.color.on_accent))
         else sortButton.tint(getColor(R.color.panel_alt), getColor(R.color.text))
@@ -1192,25 +1274,15 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         work.execute {
             try {
                 val source = AudioSource(this, track.uri)
-                var title = track.name.substringBeforeLast('.').ifBlank { track.name }
-                var artist = ""
-                val retriever = MediaMetadataRetriever()
-                try {
-                    retriever.setDataSource(this, track.uri)
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                        ?.takeIf { it.isNotBlank() }?.let { title = it }
-                    artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty()
-                } catch (_: Exception) {
-                    // Tags are optional; the file name is a fine title.
-                } finally {
-                    retriever.release()
-                }
+                val info = cache.info(track)
+                    ?: TrackInfo.read(this, track.uri, track.name).also { cache.putInfo(track, it) }
                 ui.post {
                     if (stale()) {
                         source.close()
                         return@post
                     }
-                    deck.load(source, title, artist, source.durationSec)
+                    deck.load(source, info.title, info.artist, source.durationSec)
+                    deck.setKey(cache.musicalKey(track))
                     deck.setHotCues(cache.hotCues(track))
                     deck.setMemoryCues(cache.memoryCues(track))
                     source.start()
@@ -1241,12 +1313,18 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val view = convertView ?: layoutInflater.inflate(R.layout.row_track, parent, false)
             val track = visibleTracks[position]
+            val info = cache.info(track)
             view.findViewById<TextView>(R.id.row_title).text =
-                track.name.substringBeforeLast('.').ifBlank { track.name }
+                info?.title ?: track.name.substringBeforeLast('.').ifBlank { track.name }
+            val seconds = info?.durationSec?.takeIf { it > 0.0 } ?: cache.get(track)?.durationSec ?: 0.0
+            view.findViewById<TextView>(R.id.row_info).text = listOfNotNull(
+                info?.artist?.takeIf { it.isNotBlank() },
+                info?.album?.takeIf { it.isNotBlank() },
+                if (seconds > 0.0) String.format(Locale.US, "%d:%02d", seconds.toInt() / 60, seconds.toInt() % 60) else null,
+                info?.codec?.takeIf { it.isNotBlank() }
+            ).joinToString("  ·  ")
+            view.findViewById<TextView>(R.id.row_key).text = cache.musicalKey(track)?.camelot.orEmpty()
             val analysis = cache.get(track)
-            view.findViewById<TextView>(R.id.row_info).text = if (analysis == null) "" else String.format(
-                Locale.US, "%d:%02d", analysis.durationSec.toInt() / 60, analysis.durationSec.toInt() % 60
-            )
             view.findViewById<TextView>(R.id.row_bpm).text =
                 if (analysis == null) "" else bpmLabel(analysis.bpm)
             view.findViewById<View>(R.id.row_load_a).setOnClickListener { loadFromRow(0, track) }
