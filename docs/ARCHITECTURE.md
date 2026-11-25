@@ -180,13 +180,14 @@ the same reason.
   nearer of half, same and double speed (87 against 174 BPM is one tempo, and
   so is 80 against 160), recomputed every block so it follows the master's
   tempo; the octave it picked holds while the master's grid stays the same.
-  PLAY on a synced deck, and SYNC pressed while both decks play, land the
-  follower on the master's beat in its next block, crossfaded like any jump:
-  the DJ never needs a second SYNC press. Afterwards sync never moves the
-  deck: when the DJ cues it or jumps (hot cue, memory cue, search, beat
-  jump), the place against the master's beat it lands on, like a jog nudge, a
-  bend button or a scratch, becomes the target; a correction of at most ±0.4 %
-  then holds it there. SYNC off folds the factor into the deck's
+  A synced deck is locked to the master's grid, as on rekordbox, so the
+  follower never needs a second SYNC press: more than 2 % of a beat off (a
+  SYNC press, PLAY, a seek, a cue jump, a grid analysed again, the master
+  starting under it), it lands on the master's beat in its next block,
+  crossfaded like any jump; under that, a correction of at most ±0.4 % holds
+  the phase without moving the playhead. A jog, a scratch, a loop or a beat
+  roll in the DJ's hands is left alone, and the beat comes back once it is
+  released. SYNC off folds the factor into the deck's
   own tempo, so nothing jumps, and
   `tempoPosition` is where a fader must sit for that speed: the FLX4 tempo
   fader, ignored while synced, takes over there (soft takeover).

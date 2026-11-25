@@ -340,8 +340,12 @@ class AudioEngine(context: Context) {
 
         while (running) {
             // As in rekordbox, a master deck that stops hands the role to the one still playing: the
-            // deck on air never follows a track being loaded, cued or started under it.
-            if (!decks[masterDeckIndex].playing && decks[1 - masterDeckIndex].playing) setMasterDeck(1 - masterDeckIndex)
+            // deck on air never follows a track being loaded, cued or started under it. A deck the DJ
+            // has synced is the exception: it follows the master the DJ picked, playing or not, so
+            // starting it before the master does not break the pair.
+            if (!decks[masterDeckIndex].playing && decks[1 - masterDeckIndex].playing &&
+                !decks[1 - masterDeckIndex].syncEnabled
+            ) setMasterDeck(1 - masterDeckIndex)
             // The follower renders first, while the master still stands where this block starts.
             if (masterDeckIndex == 0) {
                 deckB.render(BLOCK, bL, bR, if (deckB.syncEnabled) deckA else null)

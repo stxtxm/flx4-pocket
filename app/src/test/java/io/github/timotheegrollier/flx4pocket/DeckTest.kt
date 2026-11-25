@@ -584,31 +584,58 @@ class DeckTest {
         together(10.0, master)
         assertEquals("it stays on the beat", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
 
-        deck.seekTo(17.3) // needle search, hot cue, memory cue: played from there, no correction
+        deck.seekTo(17.3) // needle search, hot cue, memory cue: it lands on the beat again
         together(0.01, master)
-        assertEquals(17.3 + 256.0 / 44100.0 * 1.05, deck.positionSec, 1e-3)
-        val jumped = BeatGrid.phaseError(master.phase(), deck.phase())
+        assertEquals(
+            "a seek on a synced deck lands on the master's beat",
+            0.0,
+            BeatGrid.phaseError(master.phase(), deck.phase()),
+            1e-3
+        )
         together(5.0, master)
-        assertEquals(jumped, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+        assertEquals("and stays there", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
     }
 
     @Test
-    fun `a new grid on either deck does not make sync slide a synced deck`() {
+    fun `a synced deck that starts before the master lands on its beat`() {
+        val master = master(126.0, anchor = 0.1)
+        deck.seekTo(4.0)
+        assertTrue(deck.engageSync(master)) // SYNC pressed while both decks are stopped
+        deck.togglePlay() // the DJ starts this deck first, on its cue point
+        together(0.33, master) // the master is paused: there is no beat to land on yet
+        assertTrue(abs(BeatGrid.phaseError(master.phase(), deck.phase())) > 0.05)
+
+        master.togglePlay() // the master comes in: the deck is already on its beat
+        together(0.01, master)
+        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+        assertEquals(126.0, deck.effectiveBpm(), 1e-6)
+        together(10.0, master)
+        assertEquals("it stays on the beat", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+    }
+
+    @Test
+    fun `a new grid on either deck lands the synced deck on the beat again`() {
         val master = master(126.0)
         master.togglePlay()
         deck.togglePlay()
         assertTrue(deck.engageSync(master))
         together(1.0, master) // on the master's beat
-        fun heardGap() = master.positionSec - deck.positionSec / 1.05 // constant while the deck runs 1.05 times as fast
-        val before = heardGap()
         deck.setGrid(120.0, 0.25, 2.0) // TAP moved this deck's grid half a beat
         master.setGrid(126.0, 0.1, 2.0) // and the analysis refined the master's
+        together(0.05, master)
+        assertEquals(
+            "the deck lands on the master's beat again",
+            0.0,
+            BeatGrid.phaseError(master.phase(), deck.phase()),
+            1e-3
+        )
         together(20.0, master)
-        assertEquals("the audio stays where it was against the master", before, heardGap(), 0.002)
+        assertEquals("and holds it", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+        assertEquals(126.0, deck.effectiveBpm(), 1e-6)
     }
 
     @Test
-    fun `a nudge on a synced deck is kept`() {
+    fun `a nudge on a synced deck is taken back onto the beat`() {
         val master = master(126.0)
         master.togglePlay()
         deck.togglePlay()
@@ -618,11 +645,14 @@ class DeckTest {
             deck.bend(5) // the DJ pushes the platter: the grid was a little off
             together(0.05, master)
         }
-        together(0.5, master)
-        val nudged = BeatGrid.phaseError(master.phase(), deck.phase())
-        assertTrue("the deck now runs ahead of the master's grid", nudged < -0.02)
+        assertTrue(
+            "the push moves the deck while the hand is on it",
+            abs(BeatGrid.phaseError(master.phase(), deck.phase())) > 0.01
+        )
+        together(0.5, master) // released: as rekordbox, sync takes the beat back
+        assertEquals("the beat is back", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
         together(8.0, master)
-        assertEquals("sync holds the tempo around the nudge, it does not undo it", nudged, BeatGrid.phaseError(master.phase(), deck.phase()), 0.002)
+        assertEquals("and stays there", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
         assertEquals(126.0, deck.effectiveBpm(), 1e-6)
     }
 

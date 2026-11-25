@@ -53,13 +53,14 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   a BPM, from the whole track, read in one octave from 70 to 180 BPM (174 is
   not 87, and 80 stays 80). A wrong octave is one long press away: **Halve /
   Double the BPM** in the track menu.
-- Beat sync: the synced deck takes the master's tempo and follows it;
-  pressed while both decks play, SYNC also puts it on the master's beat, and
-  so does PLAY on a deck that is already synced. Cued or jumped afterwards,
-  it plays from where you put it and sync holds that place; a jog nudge is
-  kept; SYNC off keeps the tempo; half and double tempo sync at the same
-  speed (80 against 160). The deck on air is the master: one being loaded or
-  cued under it never takes it along.
+- Beat sync as rekordbox: press SYNC and the deck takes the master's tempo
+  and stays locked to its grid — at once on a playing deck, at PLAY on a
+  stopped one, and again after a seek, a hot cue or a refined grid. A jog or
+  a scratch bends it while you hold it; the beat comes back when you let go.
+  SYNC is lit on both decks while one follows the other, and SYNC off keeps
+  the tempo. Half and double tempo sync at the same speed (80 against 160).
+  The deck on air is the master: one being loaded or cued under it never
+  takes it along, unless the DJ synced it there.
 - Loops as rekordbox plays them on the FLX4: IN, OUT, 4 BEAT / EXIT, halve /
   double, beat loops of 1/4 to 32 beats. The length shows on the 4 BEAT / EXIT
   button and on the BEAT LOOP pads. With quantize (Q) the points snap to the

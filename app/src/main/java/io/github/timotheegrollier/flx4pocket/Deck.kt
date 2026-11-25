@@ -153,10 +153,6 @@ class Deck(val index: Int) {
     private var cuePreview = false
     private var syncOctave = 1.0 // 0.5 or 2.0 when the master's tempo is nearer double or half this deck's
     private var syncGrids = Double.NaN // the grids' tempo ratio the octave was chosen for
-    private var syncOffset = 0.0 // beats the DJ nudged this deck off the master's beat: sync holds the tempo around it
-    private var syncAlign = false // SYNC pressed on a playing deck: onto the master's beat in the next block
-    private var syncHold = false // started or jumped by the DJ: sync keeps the beat where the deck now is
-    private var heldMasterGrid: BeatGrid? = null // the master's grid the held place was measured against
     private var misses = 0
     private val sample = FloatArray(2)
 
@@ -284,12 +280,6 @@ class Deck(val index: Int) {
         }
         if (durationSec > 0 && positionSec >= durationSec - 0.05) seekToInternal(0.0)
         playing = true
-        if (syncEnabled && grid.valid) {
-            // SYNC on: PLAY lands on the master's beat at once, as rekordbox does, instead of
-            // holding whatever place the deck was resting at (which needed a second SYNC press).
-            syncAlign = true
-            syncOffset = 0.0
-        }
     }
 
     @Synchronized
@@ -409,7 +399,6 @@ class Deck(val index: Int) {
     fun setGrid(bpm: Double, anchorSec: Double, confidence: Double) {
         grid = BeatGrid(bpm = bpm.coerceIn(0.0, 300.0), anchorSec = anchorSec)
         gridConfidence = confidence
-        syncHold = true // a new grid (TAP, analysis) must not make sync slide a synced deck: it holds where it plays
     }
 
     /**
@@ -449,11 +438,10 @@ class Deck(val index: Int) {
     }
 
     /**
-     * SYNC: this deck takes [master]'s tempo and keeps it as the master's tempo moves.
-     * Pressed while the deck plays, it also lands on the master's beat at once, and a deck
-     * started with SYNC already on lands on it at PLAY. A deck cued or jumped afterwards
-     * plays from where the DJ put it: sync keeps the tempo and that place against the beat,
-     * never moves a playing deck by itself (see [render]).
+     * SYNC: this deck takes [master]'s tempo, keeps it as the master's tempo moves, and stays
+     * on its beats (see [render]): from here it is locked, whether it plays, starts, is cued or
+     * is jumped, as on rekordbox. A jog or a scratch is followed while it is held, and the deck
+     * is back on the beat once it is released.
      */
     @Synchronized
     fun engageSync(master: Deck): Boolean {
@@ -461,9 +449,7 @@ class Deck(val index: Int) {
         syncGrids = Double.NaN // choose the octave again
         followTempo(master)
         syncEnabled = true
-        syncOffset = 0.0
         jogBend = 0.0 // a push just before SYNC must not be kept as a nudge
-        syncAlign = playing
         return true
     }
 
@@ -503,10 +489,10 @@ class Deck(val index: Int) {
         return BeatGrid.phaseError(master.phase() * max(syncOctave, 1.0), phase() * own) / own
     }
 
-    /** Seconds to move for this deck's beats to fall on [master]'s (the DJ's nudge kept); never before the track start. */
+    /** Seconds to move for this deck's beats to fall on [master]'s; never before the track start. */
     private fun beatShift(master: Deck): Double {
         val beat = grid.secondsPerBeat()
-        val shift = BeatGrid.phaseError(beatError(master), syncOffset) * beat
+        val shift = BeatGrid.phaseError(beatError(master), 0.0) * beat
         return if (positionSec + shift < 0.0) shift + beat else shift
     }
 
@@ -654,7 +640,6 @@ class Deck(val index: Int) {
         val length = loopOutSec - loopInSec
         if (positionSec >= loopOutSec && length > 0.0) {
             seekToInternal(loopInSec + (positionSec - loopInSec) % length)
-            syncHold = false // the wrap keeps the place in the beat
         }
     }
 
@@ -784,8 +769,6 @@ class Deck(val index: Int) {
             jogBend = 0.0
             stretching = false
             tailLeft = 0
-            syncHold = true // a paused deck keeps its place against the beat
-            syncAlign = false // a SYNC press is only for a deck that plays
             renderFx(outL, outR, frames) // let echo and reverb tails ring out
             return
         }
@@ -794,30 +777,30 @@ class Deck(val index: Int) {
         val ratio = rate / outputRate
         val playStep = if (playing) {
             val sync = if (syncEnabled && grid.valid && syncMaster != null && syncMaster.grid.valid && syncMaster.playing) {
-                // Follow the master's tempo as it moves, and keep the beats together.
+                // Follow the master's tempo as it moves, and stay on its beats: as on rekordbox a
+                // synced deck is locked to the master's grid, so starting, cueing or jumping it
+                // needs no second press, and a grid analysed again is followed at once.
                 followTempo(syncMaster)
-                if (syncMaster.grid !== heldMasterGrid) { // the master's grid changed (TAP, analysis): hold, don't slide
-                    heldMasterGrid = syncMaster.grid
-                    syncHold = true
-                }
-                if (syncAlign && !cuePreview) {
-                    // SYNC pressed while both play: onto the master's beat at once, crossfaded like any jump.
+                var error = BeatGrid.phaseError(beatError(syncMaster), 0.0)
+                // A jog, a scratch or a loop in the DJ's hands keeps its own speed and place: the
+                // beat comes back by itself once it is released.
+                val holding = cuePreview || scratching || nudge != 0.0 || abs(jogBend) > 1e-3 ||
+                    loopActive || rolling
+                if (!holding && abs(error) > ALIGN_BEATS) {
+                    // Too far to bring back with the tempo: onto the master's beat at once,
+                    // crossfaded like any jump. Closer than that the tempo holds it, without a click.
                     val shift = beatShift(syncMaster) * rate
                     if (stretching) grainLeft = min(grainLeft, tailLeft) else if (tailLeft == 0) startTail(cursor, JUMP_FADE)
                     cursor += shift
                     positionSec = cursor / rate
                     if (!src.hasFrame(cursor)) src.seek(positionSec)
-                } else if (syncHold || scratching || nudge != 0.0 || abs(jogBend) > 1e-3) {
-                    // Started, jumped or nudged by the DJ: from here sync holds the tempo around that place.
-                    syncOffset = beatError(syncMaster)
+                    error = 0.0
                 }
-                val error = BeatGrid.phaseError(beatError(syncMaster), syncOffset)
-                syncFactor * (1.0 + (error * 0.05).coerceIn(-0.004, 0.004))
+                val bend = if (holding) 0.0 else error
+                syncFactor * (1.0 + (bend * 0.05).coerceIn(-0.004, 0.004))
             } else {
                 syncFactor
             }
-            syncAlign = false
-            syncHold = false
             jogBend *= 0.9
             ratio * tempoRate * sync * (1.0 + nudge + jogBend)
         } else {
@@ -948,7 +931,6 @@ class Deck(val index: Int) {
         cursor = clamped * src.sampleRate
         positionSec = clamped
         misses = 0
-        syncHold = true
         if (!src.hasFrame(cursor)) src.seek(clamped)
     }
 
@@ -1130,5 +1112,13 @@ class Deck(val index: Int) {
 
         /** Crossfade on a jump (hot cue, loop, seek): 3 ms, enough to avoid a click. */
         private const val JUMP_FADE = 128
+
+        /**
+         * Beats a synced deck may be off the master's beat before it lands on it: 2 % of a beat
+         * is 7 ms at 174 BPM and 15 ms at 80 BPM, under the 3 ms crossfade's own smear, so the
+         * jump is heard as the deck settling rather than as a skip. A smaller offset the 0.4 %
+         * tempo correction holds without moving the playhead.
+         */
+        private const val ALIGN_BEATS = 0.02
     }
 }

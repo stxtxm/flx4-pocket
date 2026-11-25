@@ -539,7 +539,9 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 startForegroundService(Intent(this, PlaybackService::class.java))
             }.isSuccess
         }
-        panels.forEachIndexed { i, panel -> panel.refresh(engine.masterDeckIndex == i, takeover(i)) }
+        panels.forEachIndexed { i, panel ->
+            panel.refresh(engine.masterDeckIndex == i, takeover(i), engine.decks[1 - i].syncEnabled)
+        }
         val fx = engine.beatFx
         val fxColor = getColor(R.color.accent)
         val dark = getColor(R.color.on_accent)
@@ -589,7 +591,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             midi.setLed(MidiMap.CH_LOADED, index, d.hasTrack())
             midi.setLed(index, MidiMap.NOTE_PLAY, d.playing)
             midi.setLed(index, MidiMap.NOTE_CUE, d.hasTrack() && !d.playing)
-            midi.setLed(index, MidiMap.NOTE_SYNC, d.syncEnabled)
+            // Lit on the master too, while the other deck follows it, as on rekordbox.
+            midi.setLed(index, MidiMap.NOTE_SYNC, d.syncEnabled || (engine.masterDeckIndex == index && engine.decks[1 - index].syncEnabled))
             midi.setLed(index, MidiMap.NOTE_CUE_CHANNEL, d.cueEnabled)
             // IN or OUT blinks while the jog moves its loop point, as with rekordbox.
             val blink = SystemClock.uptimeMillis() / 250 % 2 == 0L
@@ -636,9 +639,10 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         when {
             d.syncEnabled -> d.releaseSync()
             !d.grid.valid -> toast("This deck has no BPM yet — wait for the analysis or TAP the tempo")
+            // On air: SYNC makes this deck the tempo master, and the other follows it once SYNC
+            // is on there, playing or not, so the pair can be armed in either order.
+            d.playing -> engine.setMasterDeck(deck)
             !other.grid.valid -> toast("The other deck has no BPM yet")
-            // The deck on air must not take the tempo of one that is stopped.
-            d.playing && !other.playing -> toast("Deck ${DECK_NAMES[1 - deck]} is not playing: nothing to sync to")
             else -> {
                 engine.setMasterDeck(1 - deck)
                 d.engageSync(other)

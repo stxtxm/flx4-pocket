@@ -243,7 +243,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
      * Called a few times per second: texts and button states. [takeover] is the
      * way the FLX4 tempo fader must move to take over (-1 up, +1 down), or 0.
      */
-    fun refresh(isMaster: Boolean, takeover: Int = 0) {
+    fun refresh(isMaster: Boolean, takeover: Int = 0, followed: Boolean = false) {
         val hasTrack = deck.hasTrack()
         val text = message
         title.show(
@@ -286,7 +286,7 @@ class DeckPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet?
         play.show(if (deck.playing) "❚❚" else "▶")
         style(play, deck.playing)
         style(cue, hasTrack && !deck.playing)
-        style(sync, deck.syncEnabled)
+        style(sync, deck.syncEnabled || followed) // the master's SYNC is lit while the other follows it
         style(pfl, deck.cueEnabled)
         // IN or OUT blinks while the jog (or a drag on the waveform) moves its loop point.
         val blink = SystemClock.uptimeMillis() / 250 % 2 == 0L

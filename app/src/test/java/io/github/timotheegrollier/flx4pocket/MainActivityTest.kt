@@ -165,6 +165,27 @@ class MainActivityTest {
     }
 
     @Test
+    fun `SYNC on the deck on air makes it the master, and the other follows it`() {
+        val activity = launch().get()
+        val engine = activity.engine
+        val onAir = engine.decks[1]
+        val next = engine.decks[0]
+        loadDemoTrack(onAir, "On Air", "", bpm = 126.0, at = 0.0)
+        loadDemoTrack(next, "Next", "", bpm = 124.0, at = 0.0)
+        onAir.togglePlay()
+        eventually("the playing deck takes the master role") { engine.masterDeckIndex == 1 }
+
+        activity.onSync(1) // SYNC on the deck on air: it holds the tempo, as on Pioneer gear
+        assertEquals(1, engine.masterDeckIndex)
+        assertFalse("the master follows nobody", onAir.syncEnabled)
+
+        activity.onSync(0) // SYNC on the stopped deck: it follows the master, playing or not
+        assertTrue(next.syncEnabled)
+        assertEquals("at the master's tempo", 126.0, next.effectiveBpm(), 0.001)
+        assertEquals("and the master stays the master", 1, engine.masterDeckIndex)
+    }
+
+    @Test
     fun `a channel meter reads before the fader and the crossfader, as on the FLX4`() {
         val activity = launch().get()
         val engine = activity.engine

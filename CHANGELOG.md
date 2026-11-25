@@ -1,7 +1,34 @@
 # Changelog
 
-## 0.6.2
+## 0.6.3
 
+SYNC keeps a deck on the master's beat by itself, as rekordbox does, whichever
+deck is started first; a loop or a jog in the DJ's hands is left alone.
+
+### Changed
+
+- A synced deck is locked to the master's grid instead of keeping the place it
+  happened to play at: SYNC pressed on a stopped deck lands on the beat at
+  PLAY, a deck started before the master lands on the beat when the master
+  starts, and a seek, a hot cue or a grid analysed again is followed. Up to
+  2 % of a beat the ±0.4 % tempo correction holds the phase without moving the
+  playhead; past that the deck lands on the beat in its next block, crossfaded
+  like any jump. A jog, a scratch, a loop or a beat roll keeps its own place,
+  and the beat comes back once it is released.
+- SYNC can be armed on the deck on air: it holds the tempo and the other deck
+  follows it, playing or not, so the pair can be started in either order. The
+  button is lit on both decks while one follows the other, and the "nothing to
+  sync to" refusal is gone.
+- A deck the DJ synced is not taken by the master handover when the master
+  stops: it keeps following the master the DJ picked.
+
+### Fixed
+
+- SYNC did not put a deck on the beat when it was started before the master,
+  or when the two decks were armed in the other order: the follower then slid
+  into phase over minutes, if at all.
+
+## 0.6.2
 SYNC lands on the beat when a deck starts, an 80 BPM track is read as 80, and
 a track deleted from the phone leaves the library.
 
