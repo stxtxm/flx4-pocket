@@ -284,6 +284,12 @@ class Deck(val index: Int) {
         }
         if (durationSec > 0 && positionSec >= durationSec - 0.05) seekToInternal(0.0)
         playing = true
+        if (syncEnabled && grid.valid) {
+            // SYNC on: PLAY lands on the master's beat at once, as rekordbox does, instead of
+            // holding whatever place the deck was resting at (which needed a second SYNC press).
+            syncAlign = true
+            syncOffset = 0.0
+        }
     }
 
     @Synchronized
@@ -444,9 +450,10 @@ class Deck(val index: Int) {
 
     /**
      * SYNC: this deck takes [master]'s tempo and keeps it as the master's tempo moves.
-     * Pressed while the deck plays, it also lands on the master's beat at once. A deck
-     * started, cued or jumped afterwards plays from where the DJ put it: sync keeps the
-     * tempo and that place against the beat, never moves the deck by itself (see [render]).
+     * Pressed while the deck plays, it also lands on the master's beat at once, and a deck
+     * started with SYNC already on lands on it at PLAY. A deck cued or jumped afterwards
+     * plays from where the DJ put it: sync keeps the tempo and that place against the beat,
+     * never moves a playing deck by itself (see [render]).
      */
     @Synchronized
     fun engageSync(master: Deck): Boolean {
@@ -777,7 +784,7 @@ class Deck(val index: Int) {
             jogBend = 0.0
             stretching = false
             tailLeft = 0
-            syncHold = true // a synced deck starts where the DJ starts it
+            syncHold = true // a paused deck keeps its place against the beat
             syncAlign = false // a SYNC press is only for a deck that plays
             renderFx(outL, outR, frames) // let echo and reverb tails ring out
             return

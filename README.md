@@ -50,13 +50,16 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   pitch-bend buttons, tempo fader with ±6 / ±10 / ±16 % / WIDE ranges, TAP.
 - KEY (keylock): the tempo changes, the pitch does not (WSOLA time-stretch).
 - A beat grid that holds for a whole track: the tempo to a few thousandths of
-  a BPM, from the whole track, read between 89.5 and 179 BPM (174 is not 87).
+  a BPM, from the whole track, read in one octave from 70 to 180 BPM (174 is
+  not 87, and 80 stays 80). A wrong octave is one long press away: **Halve /
+  Double the BPM** in the track menu.
 - Beat sync: the synced deck takes the master's tempo and follows it;
-  pressed while both decks play, SYNC also puts it on the master's beat.
-  Started, cued or jumped afterwards, it plays from where you put it and sync
-  holds that place; a jog nudge is kept; SYNC off keeps the tempo; half and
-  double tempo sync at the same speed. The deck on air is the master: one
-  being loaded or cued under it never takes it along.
+  pressed while both decks play, SYNC also puts it on the master's beat, and
+  so does PLAY on a deck that is already synced. Cued or jumped afterwards,
+  it plays from where you put it and sync holds that place; a jog nudge is
+  kept; SYNC off keeps the tempo; half and double tempo sync at the same
+  speed (80 against 160). The deck on air is the master: one being loaded or
+  cued under it never takes it along.
 - Loops as rekordbox plays them on the FLX4: IN, OUT, 4 BEAT / EXIT, halve /
   double, beat loops of 1/4 to 32 beats. The length shows on the 4 BEAT / EXIT
   button and on the BEAT LOOP pads. With quantize (Q) the points snap to the
@@ -96,9 +99,9 @@ Built for a **Pixel 9a** first, compatible with Android 8.0+ (API 26).
   files. A folder column shows them as a tree with track counts, next to the
   searchable track list; **BPM ↑** sorts by tempo. Playlists: **+ PLAYLIST**,
   then long-press a track to add it (they keep their order and show in the
-  folder column). Long-press a top folder or an added track to take it out of
-  the library (the files stay), a playlist to delete it. Hot cues and analysis are remembered
-  per track. Tap an empty deck (or its PLAY) to open the library for that
+  folder column). Long-press a track to take it out of the library (the files
+  stay), a top folder to take all its tracks out, a playlist to delete it.
+  Hot cues and analysis are remembered per track. Tap an empty deck (or its PLAY) to open the library for that
   deck, then tap a track to load it there. The library opens under the
   waveforms, so the playing deck and its remaining time stay in sight. With
   the FLX4: BROWSE press moves between the folders and the tracks, as in
@@ -191,7 +194,7 @@ adb install -r FLX4-Pocket-0.6.1.apk
 | PLAY / PAUSE | Play / pause; on an empty deck, open the library for it |
 | CUE | CDJ cue: set, preview while held, back to cue when playing |
 | SHIFT + CUE | Back to the start of the track |
-| BEAT SYNC / long press | Sync to the other deck's tempo (pressed while both decks play, also onto its beat; then the deck plays from where you put it), or release keeping the tempo / make this deck the master |
+| BEAT SYNC / long press | Sync to the other deck's tempo (pressed while both decks play, also onto its beat — and PLAY lands there too; afterwards the deck plays from where you put it), or release keeping the tempo / make this deck the master |
 | SHIFT + BEAT SYNC | Cycle the tempo range |
 | Tempo fader | Pitch, 14-bit, across the selected range. Ignored while the deck is synced. Soft takeover: after a sync, a touch change or a reconnection it takes over once it reaches the playing speed; until then an arrow next to the pitch shows which way to move it |
 | Jog top (touch) / side | Scratch / pitch bend |

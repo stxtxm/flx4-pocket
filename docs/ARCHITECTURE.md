@@ -177,14 +177,16 @@ the same reason.
 - **Jumps** (hot cues, loops, seeks) crossfade from the old position over
   3 ms instead of cutting; with keylock the next grain starts at the target.
 - **Sync**: the follower's factor is `masterBpm / ownBpm`, folded to the
-  nearer of half, same and double speed (87 against 174 BPM is one tempo) and
-  recomputed every block so it follows the master's tempo. SYNC pressed while
-  both decks play also lands the follower on the master's beat in its next
-  block, crossfaded like any jump. Otherwise sync never moves the deck: when
-  the DJ starts it (PLAY), cues it or jumps (hot cue, memory cue, search,
-  beat jump), the place against the master's beat it lands on, like a jog
-  nudge, a bend button or a scratch, becomes the target; a correction of at
-  most ±0.4 % then holds it there. SYNC off folds the factor into the deck's
+  nearer of half, same and double speed (87 against 174 BPM is one tempo, and
+  so is 80 against 160), recomputed every block so it follows the master's
+  tempo; the octave it picked holds while the master's grid stays the same.
+  PLAY on a synced deck, and SYNC pressed while both decks play, land the
+  follower on the master's beat in its next block, crossfaded like any jump:
+  the DJ never needs a second SYNC press. Afterwards sync never moves the
+  deck: when the DJ cues it or jumps (hot cue, memory cue, search, beat
+  jump), the place against the master's beat it lands on, like a jog nudge, a
+  bend button or a scratch, becomes the target; a correction of at most ±0.4 %
+  then holds it there. SYNC off folds the factor into the deck's
   own tempo, so nothing jumps, and
   `tempoPosition` is where a fader must sit for that speed: the FLX4 tempo
   fader, ignored while synced, takes over there (soft takeover).
@@ -219,8 +221,8 @@ first grid after one minute, so a deck can sync at once, then the final one
 from the whole track (up to ten minutes). The waveform is handed to the deck
 immediately and fills in while it is drawn. Results are cached: grid and hot
 cues in SharedPreferences, waveforms as files in the cache directory, keyed by
-document URI and modification time. Grids from before 0.6 only label the
-library until their track is loaded and analysed again.
+document URI and modification time. Grids from older analysers only label
+the library until their track is loaded and analysed again.
 
 ## Beat grid
 
@@ -228,23 +230,33 @@ Sync, quantize, loops and the drawn grid all rest on one tempo and the time
 of one beat. A grid that is 0.05 BPM off is 115 ms off after five minutes, so
 `BpmAnalyzer` works for thousandths of a BPM:
 
-1. Onset envelope: the rise of the log energy per 5.8 ms frame, minus its
-   local mean.
+1. Onset envelopes: the rise of the log energy per 5.8 ms frame, minus its
+   local mean. A one-pole low pass at 120 Hz gives a second envelope for the
+   phase, where the kick and the bass are, so an offbeat hat does not move the
+   grid.
 2. Tempo: autocorrelation up to four beats of the slowest tempo. A lag scores
    with its 2, 3 and 4 multiples (a beat also repeats after a bar), each value
    summed with its neighbours since a beat is rarely a whole number of
-   frames; the shortest lag wins unless a longer one is 10 % better.
-3. Exact period: the same autocorrelation peak is followed to 2, 4, 8 ...
-   beats, up to half the stretch, with a parabolic fit: a fraction of a frame
-   at a lag of two minutes is a thousandth of a BPM.
-4. One octave: tempos read from 89.5 to 179 BPM, so 174 is never 87 (and 85
-   reads 170; sync treats half and double as the same tempo).
-5. Anchor: the envelope folded onto one beat; the centre of mass of its three
-   busiest frames is the beat, finer than one frame.
+   frames. The four strongest peaks are kept, not just the shortest: a
+   syncopated bar can make a multiple look stronger than the beat.
+3. One octave: every candidate folds into 70–180 BPM by doubling or halving,
+   so a track is 80 when it is 80 (sync still treats 80 and 160 as one tempo)
+   and 174 is never 87.
+4. Exact period: a 64-bin phase histogram of the envelope over the whole
+   stretch scores a candidate; the search runs ±3.5 % then ±0.2 % around the
+   fold. A comb only peaks when its period holds for minutes, and a hundredth
+   of a BPM is a few milliseconds over that stretch.
+5. Anchor: the kick envelope folded onto one beat; the centre of mass of its
+   three busiest frames is the beat, finer than one frame.
+6. The final analysis keeps the octave the one-minute preview published, so a
+   grid never flips to half or double tempo while the track plays.
 
-Known limit: a breakbeat whose off-beat kicks outweigh its snares can anchor
-half a beat off. TAP (three taps or more) fixes that without touching the
-tempo: see `Deck.tapGrid`.
+Known limits: a breakbeat whose off-beat kicks outweigh its snares can anchor
+half a beat off; TAP (three taps or more) fixes that without touching the
+tempo, see `Deck.tapGrid`. A very sparse or very syncopated track can still be
+read at the wrong octave: the track menu's **Halve the BPM** and **Double the
+BPM** rewrite that grid in the cache, and the deck playing it takes it at
+once.
 
 ## Waveform drawing
 

@@ -81,6 +81,24 @@ class BpmAnalyzerTest {
     }
 
     @Test
+    fun `80 bpm stays 80, and 160 stays 160`() {
+        val fps = 44100.0 / 256
+        val slow = BpmAnalyzer.estimate(clicks(fps, 240.0, 80.0, 0.137), fps)!!
+        assertEquals("a slow track is not read at the next octave up", 80.0, slow.bpm, 0.01)
+        assertOnBeat(slow.anchorSec, expected = 0.137, bpm = 80.0)
+        val fast = BpmAnalyzer.estimate(clicks(fps, 240.0, 160.0, 0.137), fps)!!
+        assertEquals(160.0, fast.bpm, 0.01)
+    }
+
+    @Test
+    fun `the final analysis keeps the octave of the preview`() {
+        assertEquals(128.0, BpmAnalyzer.sameOctave(256.0, 128.0), 1e-9)
+        assertEquals(174.0, BpmAnalyzer.sameOctave(87.0, 174.0), 1e-9)
+        assertEquals(130.0, BpmAnalyzer.sameOctave(130.0, 129.0), 1e-9)
+        assertEquals("another tempo altogether is kept", 96.0, BpmAnalyzer.sameOctave(96.0, 128.0), 1e-9)
+    }
+
+    @Test
     fun `174 bpm does not come out as 87`() {
         val fps = 44100.0 / 256
         val estimate = BpmAnalyzer.estimate(clicks(fps, 240.0, 174.0, 0.1), fps)!!

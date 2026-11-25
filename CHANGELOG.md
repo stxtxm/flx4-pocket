@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.2
+
+SYNC lands on the beat when a deck starts, an 80 BPM track is read as 80, and
+a track deleted from the phone leaves the library.
+
+### Changed
+
+- A synced deck lands on the master's beat at PLAY, as rekordbox does, so the
+  second SYNC press a DJ had to make is gone. SYNC pressed while both decks
+  play still lands it at once; after that, a cue or a jump keeps its place
+  against the beat as in 0.6.1.
+- Beat grid: one octave of 70 to 180 BPM instead of 89.5 to 179, the four
+  strongest autocorrelation peaks instead of the shortest, and a comb search
+  over the whole track to settle the octave: an 80 BPM track reads 80 and
+  syncs to a 160 BPM master at its own speed. The phase is measured on the
+  kick band (below 120 Hz) alone, so an offbeat hat no longer pulls the grid.
+- The final grid keeps the octave of the one-minute preview, so a grid can no
+  longer slide to half or double tempo while the track plays.
+- **Halve the BPM** and **Double the BPM** in the track menu fix a wrong
+  octave by hand, tab and playing deck included.
+- Grids are cached under a new key: tracks analysed by an earlier version are
+  analysed again the next time they are loaded, and show their old grid until
+  then.
+
+### Fixed
+
+- A track deleted from the phone no longer stays in the library: the library
+  is rescanned when the app comes back to the front, and a long press offers
+  **Remove from the library** for any track (the file stays).
+
 ## 0.6.1
 
 SYNC leaves the start to the DJ, the level meters read as on the FLX4, and the

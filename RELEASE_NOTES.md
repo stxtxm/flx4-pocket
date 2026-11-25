@@ -1,6 +1,7 @@
-FLX4 Pocket 0.6.1
+FLX4 Pocket 0.6.2
 
-- SYNC no longer moves a deck by itself: started, cued or jumped, a synced deck plays from where you put it, at the master's tempo, and keeps that place against the beat. Only SYNC pressed while both decks play puts it on the master's beat.
-- Level meters read as on the FLX4: before the channel fader and the crossfader, so a deck cued in the headphones shows its level. Both channels are read, and the FLX4 LEDs follow Pioneer's scale: at TRIM centre a normal track lights orange on its loudest parts. A peak no longer fades before the FLX4 shows it.
-- FLX4 headphones silent? Many phones (the Pixel 9 family included) only send the FLX4 two of its four channels, a known Android bug. Unplug, set the Android MONO/STEREO switch on the FLX4's rear panel to MONO, replug, then tick "Headphones over 2 channels" in AUDIO: master and headphones each in mono. Check once: deck 2 fader down, CUE on: it must play in the headphones only. Never tick it with the switch on STEREO, and untick it before setting the switch back: the app remembers it.
-- Red on the master meter means the limiter is at work: the mix is too hot.
+- SYNC now lands a deck on the master's beat at PLAY, as rekordbox does: no second SYNC press. SYNC pressed while both decks play still puts it on the beat at once, and afterwards a cue, a jump or a jog nudge keeps the place you gave it.
+- Tempo detection reads 80 BPM tracks as 80 (and 174 as 174), and sync treats half and double as one tempo, so an 80 BPM grid runs with a 160 BPM track at its own speed. The grid follows the kicks rather than an offbeat hat, and it no longer flips to half or double tempo while the track plays.
+- A track read at the wrong octave: long-press it in the library and pick Halve the BPM or Double the BPM. The tab and the deck already playing it follow at once.
+- A track you deleted from the phone no longer sits in the library: it is rescanned when the app comes back, and a long press offers Remove from the library for any track (the file stays).
+- Tracks analysed by an earlier version show their old grid for a moment, then are analysed again.

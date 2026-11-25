@@ -557,23 +557,32 @@ class DeckTest {
     }
 
     @Test
-    fun `a synced deck starts where the DJ starts it and keeps that place in the beat`() {
+    fun `PLAY starts a synced deck on the master's beat`() {
         val master = master(126.0, anchor = 0.1)
         master.togglePlay()
         play(1.0, target = master)
         deck.seekTo(4.0)
-        assertTrue(deck.engageSync(master)) // pressed on a paused deck: the tempo only
+        assertTrue(deck.engageSync(master)) // pressed on a paused deck: the tempo only, for now
         assertEquals("a paused deck stays on its cue point", 4.0, deck.positionSec, 0.0)
 
         play(0.33, target = master)
-        deck.togglePlay() // PLAY anywhere in the beat
+        assertTrue(
+
+            "the test starts it off the master's beat",
+            abs(BeatGrid.phaseError(master.phase(), deck.phase())) > 0.05
+        )
+        deck.togglePlay() // PLAY: no second SYNC press needed
         together(0.01, master)
-        assertEquals("it plays on from the cue point, not moved onto the master's beat", 4.0 + 256.0 / 44100.0 * 1.05, deck.positionSec, 1e-4)
-        val started = BeatGrid.phaseError(master.phase(), deck.phase())
-        assertTrue("the test starts it off the master's beat", abs(started) > 0.05)
-        together(10.0, master)
-        assertEquals("sync keeps the tempo, and that place against the beat", started, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
+        assertEquals(
+
+            "PLAY lands on the master's beat, as rekordbox does",
+            0.0,
+            BeatGrid.phaseError(master.phase(), deck.phase()),
+            1e-6
+        )
         assertEquals(126.0, deck.effectiveBpm(), 1e-6)
+        together(10.0, master)
+        assertEquals("it stays on the beat", 0.0, BeatGrid.phaseError(master.phase(), deck.phase()), 1e-3)
 
         deck.seekTo(17.3) // needle search, hot cue, memory cue: played from there, no correction
         together(0.01, master)
@@ -698,6 +707,26 @@ class DeckTest {
         deck.seekTo(0.05)
         deck.setLoopIn()
         assertEquals(0.35, deck.loopInSec, 1e-9)
+    }
+
+    @Test
+    fun `an 80 BPM deck syncs to a 160 BPM master`() {
+        deck.setGrid(80.0, 0.0, 2.0)
+        val master = master(160.0, anchor = 0.05)
+        master.togglePlay()
+        deck.seekTo(1.13) // off the beat, as a DJ drops it
+        deck.togglePlay()
+        assertTrue(deck.engageSync(master))
+        together(0.01, master)
+        assertEquals("80 BPM is half of 160: it keeps its own speed", 80.0, deck.effectiveBpm(), 1e-6)
+        assertEquals(
+            "every beat of the slow deck falls on a beat of the master",
+            0.0,
+            BeatGrid.phaseError(master.phase(), deck.phase() * 2),
+            1e-6
+        )
+        together(8.0, master)
+        assertEquals(0.0, BeatGrid.phaseError(master.phase(), deck.phase() * 2), 1e-3)
     }
 
     @Test

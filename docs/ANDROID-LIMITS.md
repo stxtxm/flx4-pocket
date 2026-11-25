@@ -146,15 +146,22 @@ different key under the same application id.
   from the background). On Android 13+ its notification only shows if
   notifications are allowed for the app; the service runs either way. It stops
   after ten minutes without playback or recording.
-- **Beat grid.** The analysis assumes one tempo for the whole track and reads
-  it between 89.5 and 179 BPM: an 85 BPM track shows 170. On such a track 4
-  BEAT, BEAT JUMP and quantize count half beats, and sync with a track read at
-  its own tempo can lock half a beat off; three taps on TAP at its real tempo
-  halve the grid. It has been validated on synthesised rhythms, not
-  on a music collection. It will be wrong on rubato, live drums or tempo
-  changes, and a breakbeat whose off-beat kicks dominate can get a grid half a
-  beat off: three taps on TAP move it onto the beat without changing the
-  tempo. Beat sync locks to these grids and corrects drift by up to 0.4 %.
+- **Beat grid.** The analysis assumes one tempo for the whole track and folds
+  it into one octave between 70 and 180 BPM: a 185 BPM track shows 92.5, a
+  60 BPM one 120, and an 80 BPM one stays 80. Sync treats half and double as
+  one tempo, so an 80 BPM grid syncs to a 160 BPM master without changing the
+  speed. The octave can still be wrong on a sparse or very syncopated track:
+  the track menu's **Halve the BPM** and **Double the BPM** rewrite that grid
+  in the cache, and the deck playing the track follows at once. On a track
+  whose grid is at another octave than the DJ counts, 4 BEAT, BEAT JUMP and
+  quantize count the grid's beats, and sync with a track read at its own
+  tempo can lock half a beat off; three taps on TAP at the real tempo fold
+  the grid to the nearest octave. It has been validated on 55 tracks of a
+  music collection and on synthesised rhythms. It will be wrong on rubato,
+  live drums or tempo changes, and a breakbeat whose off-beat kicks dominate
+  can get a grid half a beat off: three taps on TAP move it onto the beat
+  without changing the tempo. Beat sync locks to these grids and corrects
+  drift by up to 0.4 %.
 - **Recording.** REC writes the master output, after the master level and the
   limiter: the samples that are sent out, as 24-bit WAV at the output's rate,
   in `Music/FLX4 Pocket` (before Android 10, the app's own Music folder). Its

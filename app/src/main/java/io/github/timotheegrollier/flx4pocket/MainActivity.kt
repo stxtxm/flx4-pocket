@@ -203,9 +203,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         preferences.getString(PREF_FOLDER, null)?.let { old ->
             preferences.edit().putStringSet(PREF_FOLDERS, sources(PREF_FOLDERS) + old).remove(PREF_FOLDER).apply()
         }
-        if (hasMusic()) {
-            scanLibrary()
-        } else {
+        if (!hasMusic()) {
             libraryInfo.text = "Add your music"
             showLibrary(true)
         }
@@ -214,6 +212,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     override fun onResume() {
         super.onResume()
         updates.onResume()
+        // Back in the app: a track deleted from the phone meanwhile drops out of the list.
+        if (hasMusic()) scanLibrary()
         Choreographer.getInstance().postFrameCallback(this)
     }
 
@@ -945,6 +945,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 preferences.edit()
                     .putStringSet(PREF_FOLDERS, sources(PREF_FOLDERS) - gone)
                     .putStringSet(PREF_FILES, sources(PREF_FILES) - gone)
+                    .putStringSet(PREF_HIDDEN, sources(PREF_HIDDEN).filterNot { h -> gone.any { h.startsWith("$it/") } }.toSet())
                     .apply()
                 gone.forEach {
                     runCatching { contentResolver.releasePersistableUriPermission(Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -955,13 +956,27 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             .show()
     }
 
+    /** Hides one track of an added folder from the library; the file and its folder stay. */
+    private fun confirmHide(track: Track) {
+        AlertDialog.Builder(this)
+            .setTitle("Remove ${track.name} from the library?")
+            .setMessage("The file stays on the phone.")
+            .setPositiveButton("Remove") { _, _ ->
+                preferences.edit().putStringSet(PREF_HIDDEN, sources(PREF_HIDDEN) + track.uri.toString()).apply()
+                scanLibrary()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
     private fun scanLibrary() {
         libraryInfo.text = "Scanning…"
         val folders = sources(PREF_FOLDERS).map(Uri::parse)
         val files = sources(PREF_FILES).map(Uri::parse)
+        val hidden = sources(PREF_HIDDEN)
         work.execute {
             val found = try {
-                library.scan(folders, files)
+                library.scan(folders, files).filter { it.uri.toString() !in hidden }
             } catch (_: Exception) {
                 emptyList()
             }
@@ -1002,12 +1017,42 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 savePlaylists()
             })
         }
+        val analysis = cache.get(track)
+        if (analysis != null) {
+            // Half and double are the same beat: the analyser can read either, and rekordbox lets
+            // the DJ settle it. The deck playing the track takes the new grid at once.
+            if (analysis.bpm / 2.0 >= 40.0) {
+                actions.add("Halve the BPM (${bpmLabel(analysis.bpm / 2.0)})" to { setTrackBpm(track, analysis, 0.5) })
+            }
+            if (analysis.bpm * 2.0 <= 300.0) {
+                actions.add("Double the BPM (${bpmLabel(analysis.bpm * 2.0)})" to { setTrackBpm(track, analysis, 2.0) })
+            }
+        }
         if (track.folder == Library.ADDED_FILES) actions.add("Remove from the library…" to { confirmRemove(track.name, listOf(track)) })
+        else actions.add("Remove from the library…" to { confirmHide(track) })
         AlertDialog.Builder(this)
             .setTitle(track.name.substringBeforeLast('.').ifBlank { track.name })
             .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
             .show()
     }
+
+    /** Rewrites the grid of [track] in the cache at another octave, tab and loaded deck included. */
+    private fun setTrackBpm(track: Track, analysis: BpmAnalyzer.Result, factor: Double) {
+        val result = BpmAnalyzer.Result(
+            bpm = analysis.bpm * factor,
+            anchorSec = analysis.anchorSec, // still a beat: half-time keeps every other one
+            confidence = analysis.confidence,
+            durationSec = analysis.durationSec
+        )
+        cache.put(track, result)
+        loadedTracks.forEachIndexed { index, loaded ->
+            if (loaded == track) engine.decks[index].setGrid(result.bpm, result.anchorSec, result.confidence)
+        }
+        filterTracks()
+        toast("BPM set to ${bpmLabel(result.bpm)}")
+    }
+
+    private fun bpmLabel(bpm: Double): String = String.format(Locale.US, "%.1f", bpm)
 
     internal fun addToPlaylist(name: String, track: Track) { // internal: the UI test builds a playlist
         val uris = playlists.getOrPut(name) { ArrayList() }
@@ -1199,7 +1244,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                 Locale.US, "%d:%02d", analysis.durationSec.toInt() / 60, analysis.durationSec.toInt() % 60
             )
             view.findViewById<TextView>(R.id.row_bpm).text =
-                if (analysis == null) "" else String.format(Locale.US, "%.1f", analysis.bpm)
+                if (analysis == null) "" else bpmLabel(analysis.bpm)
             view.findViewById<View>(R.id.row_load_a).setOnClickListener { loadFromRow(0, track) }
             view.findViewById<View>(R.id.row_load_b).setOnClickListener { loadFromRow(1, track) }
             // The row under the cursor stands out while BROWSE moves in the tracks.
@@ -1362,6 +1407,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         const val PREF_FOLDER = "folder" // up to 0.4: the one music folder
         const val PREF_FOLDERS = "folders"
         const val PREF_FILES = "files"
+        const val PREF_HIDDEN = "hidden" // tracks removed one by one from an added folder
         const val PREF_PLAYLISTS = "playlists"
         const val PREF_WAVE_SHARE = "wave_share"
         const val PREF_SPLIT = "phones_over_2" // not "split_cue": up to 0.6.0 that box did nothing on the FLX4 and may be left ticked

@@ -12,8 +12,8 @@ All tests run on the JVM; no device or emulator is needed.
 | Test class | Covers |
 | --- | --- |
 | `Flx4DecoderTest` | The FLX4 address table: every mapped button, knob, jog mode and pad range, running status, 14-bit pairs per deck, relative encoders, repeated positions reported once |
-| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, loops that keep the beat (late OUT, early 4 BEAT, 1/4-beat loops, halving under the playhead), the loop length reported exactly on any grid, a loop asked for before the first beat, a jump past a loop leaving it, click-free loop seams (also with KEY, which must restart at the loop start at once), loop point adjust with the jog, memory cues (a call waits on the cue), instant doubles, hot cues (with quantize they keep the place in the beat), beat jump (during a loop it moves the loop), slip roll, pad FX, scratch, bend, sync (the tempo; the beat when SYNC is pressed on a playing deck; a deck started or jumped plays from there and keeps that place in the beat, also when either grid changes; a nudge kept, half and double tempo, SYNC off keeping the tempo, the master's tempo moving), TAP correcting a grid, keylock pitch and tempo, time and pitch at a 48 kHz output, click-free jumps, Smart CFX |
-| `BpmAnalyzerTest`, `BeatGridTest` | The beat grid to a hundredth of a BPM: click tracks, a non-integer tempo over five minutes, 174 not read as 87, a silent intro, and a synthesised kick and hat track through the real PCM path whose grid must still sit on its kicks after five minutes; beat math |
+| `DeckTest` | Play, tempo ranges, end of track, CDJ cue, beat and manual loops, halve/double, loops that keep the beat (late OUT, early 4 BEAT, 1/4-beat loops, halving under the playhead), the loop length reported exactly on any grid, a loop asked for before the first beat, a jump past a loop leaving it, click-free loop seams (also with KEY, which must restart at the loop start at once), loop point adjust with the jog, memory cues (a call waits on the cue), instant doubles, hot cues (with quantize they keep the place in the beat), beat jump (during a loop it moves the loop), slip roll, pad FX, scratch, bend, sync (the tempo; the beat when SYNC is pressed on a playing deck and when PLAY starts a synced deck; a deck jumped plays from there and keeps that place in the beat, also when either grid changes; a nudge kept, half and double tempo, 80 BPM against 160, SYNC off keeping the tempo, the master's tempo moving), TAP correcting a grid, keylock pitch and tempo, time and pitch at a 48 kHz output, click-free jumps, Smart CFX |
+| `BpmAnalyzerTest`, `BeatGridTest` | The beat grid to a hundredth of a BPM: click tracks, a non-integer tempo over five minutes, 174 not read as 87, 80 not read as 160, the final analysis keeping the preview's octave, a silent intro, and a synthesised kick and hat track through the real PCM path whose grid must still sit on its kicks after five minutes; beat math |
 | `RecorderTest` | The WAV header and the 24-bit samples read back, a recording continuing in a second file at the size limit, a write error stopping it with its reason |
 | `TrackBufferTest` | Whole-track buffer: decoded frames read back, undecoded ones wait, capacity |
 | `FxTest` | Bypass when off, echo timing and tail, trans gating, stability of every effect |
@@ -73,16 +73,17 @@ Audio
 
 Beat grid and sync (two tracks you know, played for several minutes)
 
-13. The tempo shown is the track's (compare with rekordbox), 174 BPM tracks
-    included; the beat marks sit on the kicks at the start and at the end of
-    the track. A track loaded with an earlier version shows its old grid for
-    a moment, then the new one.
-14. SYNC on a paused deck, then PLAY anywhere: it starts exactly where it
-    was cued, at the master's tempo, and stays at that place against the
-    beat. SYNC pressed while both play puts it on the beat at once. A hot
-    cue or a needle search on the synced deck plays from there, without a
-    correction. Two decks put on the beat still sound as one after three
-    minutes.
+13. The tempo shown is the track's (compare with rekordbox), 174 and 80 BPM
+    tracks included; the beat marks sit on the kicks at the start and at the
+    end of the track. A track loaded with an earlier version shows its old
+    grid for a moment, then the new one. Long-press a track read at the wrong
+    octave: Halve / Double the BPM fixes it, tab and playing deck included.
+14. SYNC on a paused deck, then PLAY anywhere: it lands on the master's beat
+    at once, with no second SYNC press, and stays there. SYNC pressed while
+    both play puts it on the beat too. A hot cue or a needle search on the
+    synced deck plays from there, without a correction. Two decks put on the
+    beat still sound as one after three minutes; so do an 80 BPM track and a
+    160 BPM one.
 15. A jog nudge on the synced deck stays where you put it. SYNC off, or SYNC
     on the other deck, changes no tempo. With SYNC on, the FLX4 tempo fader
     does nothing; after SYNC off the arrow by the pitch shows where to move it.

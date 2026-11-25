@@ -143,10 +143,11 @@ always applies. Not yet verified on hardware.
 ## Sync, loops and tap
 
 - **BEAT SYNC** matches the tempo (87 against 174 BPM counts as the same
-  tempo), and pressed while both decks play, the beat position too. After
-  that it never moves the deck by itself: started, cued, jumped or nudged, the
-  deck plays from where the DJ put it and sync holds the tempo and that place
-  against the beat. SYNC off keeps the tempo.
+  tempo, and so do 80 and 160), and lands the deck on the master's beat: at
+  once when pressed while the deck plays, and at PLAY when the deck was
+  already synced. After that it never moves the deck by itself: cued, jumped
+  or nudged, the deck plays from where the DJ put it and sync holds the tempo
+  and that place against the beat. SYNC off keeps the tempo.
 - **Sync master**: the deck the other one was synced to. When it stops, the
   deck still playing takes the role, so the deck on air never follows a track
   being loaded or cued. The long press hands it over by hand.

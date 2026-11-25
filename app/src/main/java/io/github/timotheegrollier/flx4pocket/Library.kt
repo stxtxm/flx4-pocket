@@ -185,8 +185,10 @@ class AnalysisCache(context: Context) {
     private val waveforms = File(context.cacheDir, "waveforms")
 
     fun get(track: Track): BpmAnalyzer.Result? {
-        // Grids from before 0.6 (under the bare key) drift: they label the library until the track is analysed again.
-        val parts = (preferences.getString(key(track) + GRID, null) ?: preferences.getString(key(track), null))
+        // Grids from older analysers still label the library until the track is played again.
+        val parts = (preferences.getString(key(track) + GRID, null)
+            ?: preferences.getString(key(track) + LEGACY_GRID, null)
+            ?: preferences.getString(key(track), null))
             ?.split('|') ?: return null
         if (parts.size != 4) return null
         val bpm = parts[0].toDoubleOrNull() ?: return null
@@ -240,7 +242,8 @@ class AnalysisCache(context: Context) {
     private fun key(track: Track): String = "${track.uri}|${track.lastModified}"
 
     private companion object {
-        const val GRID = "|grid2"
+        const val GRID = "|grid3"
+        const val LEGACY_GRID = "|grid2"
     }
 }
 
@@ -269,11 +272,15 @@ object TrackAnalyzer {
         var onsets: BpmAnalyzer.Onsets? = null
         var gridDone = cachedGrid != null
         var previewed = false
+        var previewBpm = 0.0
         var duration = 0.0
         fun finishGrid() {
             gridDone = true
             val estimate = onsets?.estimate() ?: return
-            val result = BpmAnalyzer.Result(estimate.bpm, estimate.anchorSec, estimate.confidence, duration)
+            // Keep the octave the preview published: a grid that reads 128 and then 256
+            // while the track plays would double the deck under the DJ.
+            val bpm = BpmAnalyzer.sameOctave(estimate.bpm, previewBpm)
+            val result = BpmAnalyzer.Result(bpm, estimate.anchorSec, estimate.confidence, duration)
             cache.put(track, result)
             onGrid(result)
         }
@@ -293,7 +300,10 @@ object TrackAnalyzer {
                 // A first grid after a minute, so the deck can sync while the rest decodes.
                 if (!previewed && energy.seconds >= PREVIEW_SECONDS) {
                     previewed = true
-                    energy.estimate()?.let { onGrid(BpmAnalyzer.Result(it.bpm, it.anchorSec, it.confidence, durationSec)) }
+                    energy.estimate()?.let {
+                        previewBpm = it.bpm
+                        onGrid(BpmAnalyzer.Result(it.bpm, it.anchorSec, it.confidence, durationSec))
+                    }
                 }
                 if (energy.seconds >= GRID_SECONDS) finishGrid()
             }
