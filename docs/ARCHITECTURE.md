@@ -57,7 +57,19 @@ the engine first asks for a 44.1 kHz mixer there
 without being resampled at all. The decks, the effects and the limiter are
 told the rate (`Deck.setOutputRate`) while the output is stopped. The status
 line shows the rate, `fast` when the path was granted, and the delay Android
-reports.
+reports. A four-channel stream that misses the fast path where a stereo one
+gets it is on an output Android mixes in stereo, which drops channels 3-4
+anyway: the engine then plays stereo.
+
+**Buffer.** The stream starts on two blocks of buffer, grows by one after an
+underrun (up to six) and gives one back after 10 s without an underrun. A size
+that underruns again once reached that way is not tried again. Every 64
+blocks the engine sets the size again, since a track Android re-creates comes
+back on its whole capacity.
+
+**Controller input.** MIDI bytes are decoded on the main thread, posted as
+asynchronous messages: a layout pending until the next frame holds ordinary
+messages back, by up to a frame.
 
 Per block:
 

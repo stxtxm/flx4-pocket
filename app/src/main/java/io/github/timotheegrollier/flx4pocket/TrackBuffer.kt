@@ -1,7 +1,5 @@
 package io.github.timotheegrollier.flx4pocket
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlin.math.roundToInt
 
 /**
@@ -9,13 +7,14 @@ import kotlin.math.roundToInt
  * decoder a few seconds after loading. Once a frame is in, a jump to it (hot
  * cue, loop, beat jump, needle) plays at once: no codec seek, no gap.
  *
- * About 10 MB a minute. A direct buffer, but on Android those live on the Java
- * heap: the manifest asks for a large heap, so two long tracks fit. One writer
+ * About 10 MB a minute on the Java heap: the manifest asks for a large heap, so
+ * two long tracks fit. A plain array: the mixer reads up to 32 samples a frame,
+ * and a direct buffer's get() costs several calls each. One writer
  * thread, one reader thread (the mixer). Android-free.
  */
 class TrackBuffer(val sampleRate: Int, private val capacityFrames: Int) {
 
-    private val pcm = ByteBuffer.allocateDirect(capacityFrames * 4).order(ByteOrder.nativeOrder()).asShortBuffer()
+    private val pcm = ShortArray(capacityFrames * 2)
 
     private val weights = FloatArray(Sinc.TAPS)
 
@@ -33,7 +32,7 @@ class TrackBuffer(val sampleRate: Int, private val capacityFrames: Int) {
         val n = minOf(count, capacityFrames - frames)
         val first = frames * 2
         for (i in 0 until n * 2) {
-            pcm.put(first + i, (stereo[i] * 32768f).roundToInt().coerceIn(-32768, 32767).toShort())
+            pcm[first + i] = (stereo[i] * 32768f).roundToInt().coerceIn(-32768, 32767).toShort()
         }
         frames += n
         return n == count
@@ -65,5 +64,5 @@ class TrackBuffer(val sampleRate: Int, private val capacityFrames: Int) {
         return true
     }
 
-    private fun get(i: Int): Float = pcm.get(i) / 32768f
+    private fun get(i: Int): Float = pcm[i] / 32768f
 }

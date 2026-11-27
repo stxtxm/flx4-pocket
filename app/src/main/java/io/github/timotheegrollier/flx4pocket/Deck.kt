@@ -165,6 +165,7 @@ class Deck(val index: Int) {
     private var stretching = false // the last block played grains
     private var grainPos = 0.0 // next frame of the grain playing now
     private var grainLeft = 0 // output frames before the next grain starts
+    private var landExact = false // the next grain starts on the playhead: a jump, not a continuation
     private var tailPos = 0.0 // next frame of the audio fading out (old grain, or before a jump)
     private var tailLeft = 0
     private var tailLength = 1
@@ -280,7 +281,8 @@ class Deck(val index: Int) {
     fun togglePlay() {
         if (source == null) return
         if (playing) {
-            playing = false
+            // PLAY while CUE is held: the deck keeps playing once CUE is released, as on CDJs.
+            if (!cuePreview) playing = false
             cuePreview = false
             return
         }
@@ -362,8 +364,8 @@ class Deck(val index: Int) {
     fun bend(ticks: Int) {
         if (adjusting) return adjustLoop(ticks * JOG_TICK_SECONDS)
         if (playing) {
-            // Decaying by 10 % per block, 0.02 shifts the track about 1 ms per tick.
-            jogBend = (jogBend + ticks * 0.02).coerceIn(-0.5, 0.5)
+            // Decaying by 20 % per block, 0.045 shifts the track about 1 ms per tick, half of it within 20 ms.
+            jogBend = (jogBend + ticks * 0.045).coerceIn(-0.5, 0.5)
         } else {
             seekToInternal(positionSec + ticks * JOG_TICK_SECONDS)
         }
@@ -800,18 +802,18 @@ class Deck(val index: Int) {
                     // Too far to bring back with the tempo: onto the master's beat at once,
                     // crossfaded like any jump. Closer than that the tempo holds it, without a click.
                     val shift = beatShift(syncMaster) * rate
-                    if (stretching) grainLeft = min(grainLeft, tailLeft) else if (tailLeft == 0) startTail(cursor, JUMP_FADE)
+                    if (stretching) landOnCursor() else if (tailLeft == 0) startTail(cursor, JUMP_FADE)
                     cursor += shift
                     positionSec = cursor / rate
                     if (!src.hasFrame(cursor)) src.seek(positionSec)
                     error = 0.0
                 }
                 val bend = if (holding) 0.0 else error
-                syncFactor * (1.0 + (bend * 0.05).coerceIn(-0.004, 0.004))
+                syncFactor * (1.0 + (bend * 0.5).coerceIn(-0.004, 0.004))
             } else {
                 syncFactor
             }
-            jogBend *= 0.9
+            jogBend *= 0.8
             ratio * tempoRate * sync * (1.0 + nudge + jogBend)
         } else {
             0.0
@@ -852,8 +854,13 @@ class Deck(val index: Int) {
         while (i < frames) {
             if (wrap && wrapLength > 1.0 && cursor >= wrapStart + wrapLength) {
                 // Seamless: what follows the loop end fades out while the loop start fades
-                // in; with KEY, through a grain started right here.
-                if (stretching) grainLeft = 0 else startTail(cursor, JUMP_FADE)
+                // in; with KEY, through a grain started on the loop start itself.
+                if (stretching) {
+                    grainLeft = 0
+                    landExact = true
+                } else {
+                    startTail(cursor, JUMP_FADE)
+                }
                 cursor = wrapStart + (cursor - wrapStart) % wrapLength
                 if (!src.hasFrame(cursor)) src.seek(cursor / rate)
             }
@@ -936,12 +943,18 @@ class Deck(val index: Int) {
         if (playing || scratching) {
             // Fade the old position out over a few ms rather than cutting it. A grain
             // already fading out finishes first, then the next grain starts at the target.
-            if (stretching) grainLeft = min(grainLeft, tailLeft) else startTail(cursor, JUMP_FADE)
+            if (stretching) landOnCursor() else startTail(cursor, JUMP_FADE)
         }
         cursor = clamped * src.sampleRate
         positionSec = clamped
         misses = 0
         if (!src.hasFrame(cursor)) src.seek(clamped)
+    }
+
+    /** With KEY: the next grain starts at the new playhead once the one fading out is done. */
+    private fun landOnCursor() {
+        grainLeft = min(grainLeft, tailLeft)
+        landExact = true
     }
 
     private fun startTail(position: Double, length: Int) {
@@ -956,6 +969,14 @@ class Deck(val index: Int) {
      */
     private fun startGrain(src: PcmSource, ratio: Double) {
         startTail(grainPos, GRAIN_OVERLAP)
+        if (landExact) {
+            // After a jump the old grain says nothing about where the new one fits: land on the target,
+            // the crossfade hides the seam. Searching would put a hot cue or a loop up to 12 ms off.
+            landExact = false
+            grainPos = Math.rint(cursor)
+            grainLeft = GRAIN_HOP
+            return
+        }
         for (j in reference.indices) reference[j] = mono(src, tailPos + j * ratio)
         for (k in candidates.indices) candidates[k] = mono(src, cursor + (k - GRAIN_SEEK) * ratio)
         var best = 0
@@ -990,8 +1011,9 @@ class Deck(val index: Int) {
         return dot / sqrt(energy)
     }
 
+    /** On the nearest whole frame: the grain search needs no sinc, and a grain block stays light. */
     private fun mono(src: PcmSource, position: Double): Float =
-        if (src.sampleFrame(position, sample)) (sample[0] + sample[1]) * 0.5f else 0f
+        if (src.sampleFrame(Math.rint(position), sample)) (sample[0] + sample[1]) * 0.5f else 0f
 
     private fun resetFilters() {
         lowL.reset(); lowR.reset()
@@ -1126,8 +1148,8 @@ class Deck(val index: Int) {
         /**
          * Beats a synced deck may be off the master's beat before it lands on it: 2 % of a beat
          * is 7 ms at 174 BPM and 15 ms at 80 BPM, under the 3 ms crossfade's own smear, so the
-         * jump is heard as the deck settling rather than as a skip. A smaller offset the 0.4 %
-         * tempo correction holds without moving the playhead.
+         * jump is heard as the deck settling rather than as a skip. A smaller offset the tempo
+         * correction (at most 0.4 %) takes back within about a second, without moving the playhead.
          */
         private const val ALIGN_BEATS = 0.02
     }

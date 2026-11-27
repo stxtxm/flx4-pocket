@@ -1,7 +1,10 @@
-FLX4 Pocket 0.7.0
+FLX4 Pocket 0.7.1
 
-- Track keys: each analysed track shows its key in Camelot notation (8A, 11B) beside its tempo, and on the deck next to its title. It is an estimate from the track's pitch: check it against rekordbox or your ear. The analysis runs in the background and pauses while a deck plays.
-- Track tags: the list shows the title, artist, album and codec of each file; the format line (sample rate, channels, bitrate) is read from the file. SEARCH matches artist, album and genre too.
-- SYNC follows the other deck, playing or stopped, so the pair can be armed in either start order. The SYNC light comes on at once on the synced deck, and on the master while the other follows it. A long press still makes that deck the master by hand.
-- Pressing SYNC on the deck on air leaves its SYNC light on and the pair in time.
-- Audio latency: the output buffer no longer starts oversized, and the app falls back when a forced 44.1 kHz USB mixer does not get Android's fast path. Check the status line for `fast` and the reported ms.
+- Less delay with the FLX4: if Android refuses its low-latency path to the four-channel stream (Pixel 9 family), the app plays stereo on the fast path, some 60 ms sooner. Check the status line: it should read `stereo` and `fast`. For the headphones, set the FLX4's rear switch on MONO and tick "Headphones over 2 channels" in AUDIO.
+- The output buffer shrinks back 10 s after a glitch instead of staying larger for the rest of the set.
+- Controller moves reach the decks without waiting for the screen, with less jitter.
+- Jog nudges act sooner and stop when the hand stops.
+- Holding CUE then pressing PLAY keeps the deck playing, as on CDJs.
+- A synced deck nudged off the beat comes back within a second.
+- With KEY on, hot cues, jumps and loops land exactly on the beat.
+- The screen and the pad LEDs follow the controller at once.

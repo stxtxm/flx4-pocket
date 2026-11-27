@@ -118,7 +118,7 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
         if (speed == 0.0 || abs(error) > 0.25) shown = actual else shown += error * 0.15
         // Every display frame only while the picture moves (playing, scratching, a jog cueing, an
         // analysis filling in); a still deck is looked at about fifteen times a second, which spares the battery.
-        still = speed == 0.0 && actual == lastActual && d.waveform?.complete != false
+        still = speed == 0.0 && !d.playing && actual == lastActual && d.waveform?.complete != false // started: moves on the next block
         lastActual = actual
         if (still) redrawLater(idleRedraw) else postInvalidateOnAnimation()
 

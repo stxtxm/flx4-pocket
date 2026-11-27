@@ -176,12 +176,25 @@ class AudioEngine(context: Context) {
         stopOutput()
         val quad = target != null && hasFourChannels(target) && !splitCue
         try {
-            val out = try {
+            var out = try {
                 openTrack(if (quad) 4 else 2, target)
             } catch (e: Exception) {
                 if (!quad) throw e
                 Log.w(TAG, "4-channel output refused, using stereo", e)
                 openTrack(2, target)
+            }
+            if (out.channelCount == 4 && out.performanceMode != AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) {
+                // Android's fast mixer takes four channels on an output it mixes in four. A stereo stream that
+                // gets the fast path where four channels do not means the output mixes in stereo: channels 3-4
+                // never reach the controller (the Pixel 9 family), so stereo costs nothing and is ~60 ms sooner.
+                val stereo = runCatching { openTrack(2, target) }.getOrNull()
+                if (stereo?.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) {
+                    Log.i(TAG, "4 channels missed the fast path, stereo got it: using stereo")
+                    out.release()
+                    out = stereo
+                } else {
+                    stereo?.release()
+                }
             }
             device = target
             track = out
@@ -381,6 +394,13 @@ class AudioEngine(context: Context) {
             "Output $rate Hz, $channels ch, low latency $lowLatency, buffer $bufferFrames of $maxBufferFrames frames"
         )
         var underruns = out.underrunCount
+        // The buffer steps back down after a quiet stretch: one stall (the first PLAY, before the JIT has
+        // compiled the mixer) must not cost the rest of the set. A size that underruns again once reached by
+        // stepping down is too small on this phone, and the buffer stays above it from then on.
+        var floorFrames = bufferFrames
+        var shrunk = false
+        var calm = 0
+        val calmBlocks = rate * SHRINK_AFTER_S / BLOCK
         val stamp = AudioTimestamp()
         var framesWritten = 0L
         latencyMs = 0
@@ -500,16 +520,31 @@ class AudioEngine(context: Context) {
             framesWritten += BLOCK
             if (out.underrunCount > underruns) {
                 underruns = out.underrunCount
+                calm = 0
+                if (shrunk) floorFrames = minOf(maxBufferFrames, bufferFrames + BLOCK)
+                shrunk = false
                 if (bufferFrames < maxBufferFrames) {
                     val grown = minOf(maxBufferFrames, bufferFrames + BLOCK)
                     bufferFrames = out.setBufferSizeInFrames(grown).takeIf { it > 0 } ?: bufferFrames
                     Log.w(TAG, "Underrun: buffer grown to $bufferFrames frames")
                 }
+            } else if (++calm >= calmBlocks && bufferFrames > floorFrames) {
+                calm = 0
+                shrunk = true
+                bufferFrames = out.setBufferSizeInFrames(bufferFrames - BLOCK).takeIf { it > 0 } ?: bufferFrames
+                Log.i(TAG, "Quiet: buffer back down to $bufferFrames frames")
             }
-            if (framesWritten % (BLOCK * 64) == 0L && out.getTimestamp(stamp)) {
-                val heard = stamp.framePosition + (System.nanoTime() - stamp.nanoTime) * rate / 1_000_000_000L
-                val ms = (framesWritten - heard) * 1000 / rate
-                if (ms in 1..999) latencyMs = ms.toInt() // some outputs report stale timestamps
+            if (framesWritten % (BLOCK * 64) == 0L) {
+                // A track Android re-creates (the output reopened under it) comes back on its whole capacity.
+                if (out.bufferSizeInFrames != bufferFrames) {
+                    bufferFrames = out.setBufferSizeInFrames(bufferFrames).takeIf { it > 0 } ?: bufferFrames
+                }
+                lowLatency = out.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY
+                if (out.getTimestamp(stamp)) {
+                    val heard = stamp.framePosition + (System.nanoTime() - stamp.nanoTime) * rate / 1_000_000_000L
+                    val ms = (framesWritten - heard) * 1000 / rate
+                    if (ms in 1..999) latencyMs = ms.toInt() // some outputs report stale timestamps
+                }
             }
         }
     }
@@ -523,6 +558,9 @@ class AudioEngine(context: Context) {
         /** Blocks of buffer the mixer starts on and may grow to after underruns. */
         private const val MIN_BUFFER_BLOCKS = 2
         private const val MAX_BUFFER_BLOCKS = 6
+
+        /** Seconds without an underrun before the buffer gives a block back. */
+        private const val SHRINK_AFTER_S = 10
 
         /**
          * How fast the meters fall after a peak. It used to be about 160 dB/s: between two

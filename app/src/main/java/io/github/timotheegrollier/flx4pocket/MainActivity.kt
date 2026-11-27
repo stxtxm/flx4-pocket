@@ -634,6 +634,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onPlay(deck: Int) {
         if (engine.decks[deck].hasTrack()) engine.decks[deck].togglePlay() else onLoadRequest(deck)
+        waves.getOrNull(deck)?.invalidate()
     }
 
     /** An empty deck was tapped: open the library for it, or the folder picker on first use. */
@@ -728,7 +729,14 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             }
             else -> if (down) onPress(deck, d, button)
         }
-        updateLeds() // the hardware answers at once, not on the next screen refresh
+        answer(deck)
+    }
+
+    /** The FLX4's LEDs answer a control at once, and the screen on its next frame, not on its next refresh. */
+    private fun answer(deck: Int) {
+        updateLeds()
+        frame = 0
+        waves.getOrNull(deck)?.invalidate()
     }
 
     private fun onPress(deck: Int, d: Deck?, button: Flx4Button) {
@@ -832,6 +840,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Flx4Jog.BEND -> d.bend(delta)
             Flx4Jog.SEARCH -> d.seekBy(delta * 0.2)
         }
+        waves[deck].invalidate() // a paused deck's waveform otherwise follows the jog 20 times a second
     }
 
     override fun onPadMode(deck: Int, mode: Int) {
@@ -841,19 +850,21 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Deck.PAD_KEY_SHIFT -> toast(getString(R.string.not_supported, "Key Shift"))
             else -> engine.decks[deck].padMode = mode
         }
-        updateLeds()
+        answer(deck)
     }
 
     override fun onPad(deck: Int, mode: Int, pad: Int, shift: Boolean, down: Boolean) {
         val d = engine.decks[deck]
         if (!down) {
             d.padUp(mode, pad)
-            updateLeds()
+            answer(deck)
             return
         }
+        // The pads play the FLX4's own mode, which it keeps across an app restart: its LEDs follow it.
+        if (mode != d.padMode && mode != Deck.PAD_SAMPLER && mode != Deck.PAD_KEYBOARD && mode != Deck.PAD_KEY_SHIFT) d.padMode = mode
         d.padDown(mode, pad, shift)
         if (mode == Deck.PAD_HOT_CUE) onCuesChanged(deck)
-        updateLeds()
+        answer(deck)
     }
 
     override fun onBrowse(delta: Int, shift: Boolean) {

@@ -61,6 +61,10 @@ What the app does:
   stream: master on 1-2, headphones on 3-4. The status line reads
   `master 1-2 + phones 3-4`. On a phone that delivers them all, that is the
   setup rekordbox uses on a computer.
+- If Android refuses that stream its fast path but gives it to a stereo one,
+  the phone mixes the output in stereo and channels 3-4 never reach the FLX4
+  (the Pixel 9 family): the app then plays stereo, some 60 ms sooner, and the
+  status line reads `stereo`. The headphones need the MONO switch below.
 - **Headphones over 2 channels** (AUDIO menu) sends master mono on the left
   and headphones mono on the right instead, and reopens the output at once.
   The status line reads `split cue`. Use it with the FLX4's switch on MONO
@@ -128,8 +132,10 @@ different key under the same application id.
   measurement on a Pixel 9a: if yours differ, they are what to report.
 - What remains is outside an app without native code: Android's fast mixer,
   the USB link and the controller's converter (10 to 18 ms), the app's own two
-  blocks of buffer (it grows by a block after an underrun, so it settles on
-  the smallest the output takes without glitches), and a Java thread that
+  blocks of buffer (it grows by a block after an underrun and gives it back
+  after 10 s without one, so it settles on the smallest the output takes
+  without glitches, and a single stall does not cost the rest of the set),
+  and a Java thread that
   cannot get real-time priority. Bluetooth adds 150 ms or more and is not
   usable to mix. This is a controller app, not a hard real-time CDJ.
 - The waveforms are drawn that reported delay behind the mixer, so the beat

@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.7.1
+
+Less delay between the FLX4 and the sound.
+
+### Fixed
+
+- Audio latency on the FLX4: when Android refuses the four-channel stream its
+  low-latency path but gives it to a stereo one (the Pixel 9 family, which
+  never delivers channels 3-4 anyway), the app now plays stereo on the fast
+  path, some 60 ms sooner, instead of the slow four-channel stream. The status
+  line then reads `stereo` and `fast`; the FLX4's headphones need its MONO
+  switch and "Headphones over 2 channels", as before.
+- The output buffer gives back the room an underrun took after 10 s without
+  another one. A single stall, such as the first PLAY after launch, used to
+  add up to 23 ms for the rest of the set. A track Android re-creates no
+  longer stays on its whole buffer.
+- Controller messages no longer wait up to a screen frame (8 to 17 ms) behind
+  a pending redraw: they reach the decks at once, with less jitter.
+- Jog nudges land sooner and stop when the hand stops: half the shift within
+  20 ms instead of 35, no 150 ms coast.
+- Holding CUE and pressing PLAY keeps the deck playing once CUE is released,
+  as on CDJs; it used to stop it.
+- A synced deck nudged slightly off the beat is back on it within about a
+  second, not ten.
+- With KEY on, hot cues, beat jumps, loops and sync land exactly on their
+  target instead of up to 12 ms off; the keylock costs the mixer less.
+- The screen answers the controller on its next frame: a paused deck's
+  waveform follows the jog, and the deck buttons change at once.
+- The pad LEDs follow the pad mode the FLX4 is in, also after the app
+  restarts.
+
 ## 0.7.0
 
 Track keys and tags in the library, and SYNC that follows the other deck

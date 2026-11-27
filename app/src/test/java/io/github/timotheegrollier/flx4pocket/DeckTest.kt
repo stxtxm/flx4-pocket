@@ -112,6 +112,19 @@ class DeckTest {
     }
 
     @Test
+    fun `PLAY while CUE is held keeps the deck playing`() {
+        deck.cueDown() // paused on the cue point (0 s): preview
+        play(0.5)
+        deck.togglePlay()
+        deck.cueUp()
+        assertTrue(deck.playing)
+        play(0.5)
+        assertEquals(1.0, deck.positionSec, 0.01)
+        deck.togglePlay() // a second press stops it as usual
+        assertFalse(deck.playing)
+    }
+
+    @Test
     fun `beat loop wraps and the same pad exits it`() {
         deck.seekTo(2.1)
         deck.togglePlay()

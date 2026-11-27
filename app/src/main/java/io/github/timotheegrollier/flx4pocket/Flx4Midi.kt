@@ -9,6 +9,7 @@ import android.media.midi.MidiOutputPort
 import android.media.midi.MidiReceiver
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.util.Log
 
 /**
@@ -61,7 +62,8 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
             // The framework reuses msg after this call returns.
             val copy = msg.copyOfRange(offset, offset + count)
-            handler.post { decoder.feed(copy) }
+            // Asynchronous: while a view waits to be laid out, ordinary messages are held until the next frame.
+            handler.sendMessage(Message.obtain(handler) { decoder.feed(copy) }.apply { isAsynchronous = true })
         }
     }
 
