@@ -1,10 +1,8 @@
-FLX4 Pocket 0.7.1
+FLX4 Pocket 0.7.2
 
-- Less delay with the FLX4: if Android refuses its low-latency path to the four-channel stream (Pixel 9 family), the app plays stereo on the fast path, some 60 ms sooner. Check the status line: it should read `stereo` and `fast`. For the headphones, set the FLX4's rear switch on MONO and tick "Headphones over 2 channels" in AUDIO.
-- The output buffer shrinks back 10 s after a glitch instead of staying larger for the rest of the set.
-- Controller moves reach the decks without waiting for the screen, with less jitter.
-- Jog nudges act sooner and stop when the hand stops.
-- Holding CUE then pressing PLAY keeps the deck playing, as on CDJs.
-- A synced deck nudged off the beat comes back within a second.
-- With KEY on, hot cues, jumps and loops land exactly on the beat.
-- The screen and the pad LEDs follow the controller at once.
+- Controller moves reach the decks on their own thread, without waiting for the screen: no extra delay while loading a track or browsing.
+- About 1 ms less output buffer, and on Android 12+ the phone raises its CPU clock before the mixer runs late.
+- On Android 13+ the waveforms make up for the screen's own delay too.
+- Pad rolls start on the beat, even when pressed a little late.
+- With KEY on, jog nudges are heard at once.
+- Bluetooth: the app asks for the headset's low-latency mode (Android 14+, LE Audio and some A2DP headsets). Classic Bluetooth still adds 150 ms or more: to mix, listen on the FLX4. Wired outputs are unchanged.

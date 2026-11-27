@@ -92,7 +92,7 @@ class Deck(val index: Int) {
     @Volatile
     var quantize: Boolean = true
 
-    /** Keylock (master tempo): the tempo fader, sync and nudges change the speed, not the pitch. */
+    /** Keylock (master tempo): the tempo fader and sync change the speed, not the pitch; a nudge bends both while it lasts. */
     @Volatile
     var keyLock: Boolean = false
 
@@ -558,15 +558,17 @@ class Deck(val index: Int) {
         if (source == null) return
         if (loopActive && abs(loopBeats() - beats) < 1e-3) return exitLoop()
         val length = beats * beatSeconds()
+        val start = loopStart(length)
+        setLoop(start, start + length)
+    }
+
+    /** Where a loop or roll of [length] s starts: with quantize, on the grid step nearest the playhead. */
+    private fun loopStart(length: Double): Double {
+        if (!grid.valid || !quantize) return positionSec
         // Nearest, not last: pressed just before the beat, the loop starts on it.
         val step = min(length, beatSeconds())
-        val start = if (grid.valid && quantize) {
-            val nearest = grid.anchorSec + ((positionSec - grid.anchorSec) / step).roundToLong() * step
-            if (nearest < 0.0) nearest + step else nearest // before the track starts: the next step, so the loop keeps its length
-        } else {
-            positionSec
-        }
-        setLoop(start, start + length)
+        val nearest = grid.anchorSec + ((positionSec - grid.anchorSec) / step).roundToLong() * step
+        return if (nearest < 0.0) nearest + step else nearest // before the track starts: the next step, so the loop keeps its length
     }
 
     /**
@@ -756,8 +758,10 @@ class Deck(val index: Int) {
 
     private fun startRoll(beats: Double) {
         val src = source ?: return
-        rollStart = cursor
-        rollLength = max(beats * beatSeconds(), MIN_LOOP_SECONDS) * src.sampleRate
+        val length = max(beats * beatSeconds(), MIN_LOOP_SECONDS)
+        // On the grid like a beat loop: a press that reaches the deck late still repeats from the beat.
+        rollStart = loopStart(length) * src.sampleRate
+        rollLength = length * src.sampleRate
         slipCursor = cursor
         rolling = true
     }
@@ -830,6 +834,9 @@ class Deck(val index: Int) {
             playStep
         }
         speed = step / ratio
+        // With KEY a nudge is heard at once, as a short bend of the pitch: grains held at the track's pitch
+        // would only follow it once the playhead left their search window, up to 11 ms later.
+        val grainStep = ratio * (1.0 + nudge + jogBend)
 
         val wrap = rolling || loopActive
         val wrapStart = if (rolling) rollStart else loopInSec * rate
@@ -889,7 +896,7 @@ class Deck(val index: Int) {
                 val heard = src.sampleFrame(tailPos, sample)
                 l = l * (1.0 - w) + if (heard) sample[0] * w else 0.0
                 r = r * (1.0 - w) + if (heard) sample[1] * w else 0.0
-                tailPos += ratio
+                tailPos += if (stretching) grainStep else ratio
                 tailLeft--
             }
 
@@ -904,7 +911,7 @@ class Deck(val index: Int) {
             i++
 
             if (stretching) {
-                grainPos += ratio
+                grainPos += grainStep
                 grainLeft--
             }
             cursor += step

@@ -61,15 +61,28 @@ reports. A four-channel stream that misses the fast path where a stereo one
 gets it is on an output Android mixes in stereo, which drops channels 3-4
 anyway: the engine then plays stereo.
 
-**Buffer.** The stream starts on two blocks of buffer, grows by one after an
+**Buffer.** The stream starts on two bursts of buffer (2 x 5 ms, AOSP's USB
+period, rounded to 16 frames), grows by one block after an
 underrun (up to six) and gives one back after 10 s without an underrun. A size
 that underruns again once reached that way is not tried again. Every 64
 blocks the engine sets the size again, since a track Android re-creates comes
 back on its whole capacity.
 
-**Controller input.** MIDI bytes are decoded on the main thread, posted as
-asynchronous messages: a layout pending until the next frame holds ordinary
-messages back, by up to a frame.
+**Controller input.** MIDI bytes are decoded on the MIDI port's own reader
+thread, raised to audio priority. What changes the sound (knobs and faders
+except TEMPO, the jogs, CUE, PLAY on a loaded deck, JOG touch, the pads) is
+applied there at once, through the decks' locks and volatile fields; the rest,
+the LEDs and every View go to the main thread as asynchronous messages, which
+a pending layout does not hold back.
+
+**Scheduling.** On Android 12+ the mixer thread opens an ADPF hint session and
+reports how long each block took to mix (not the blocking write), against a
+1 ms target, so the CPU governor raises the clock before a block runs late.
+
+**Bluetooth.** A Bluetooth output (chosen in AUDIO, or reached by "Phone
+default") gets the game usage and no spatializing: from Android 14 a fast
+stream with that usage asks the link for its low-latency mode, where the
+headset and codec offer one. Wired outputs keep the media usage.
 
 Per block:
 

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.2
+
+The last of the small latency gains, and Bluetooth's low-latency mode.
+
+### Changed
+
+- Controller input is decoded on the MIDI thread at audio priority: knobs,
+  faders, jogs, CUE, PLAY and the pads reach the decks without passing
+  through the screen's thread, so loading a track or browsing the library no
+  longer delays them. The LEDs and the screen still answer at once.
+- The output starts on two of the USB output's bursts instead of two blocks,
+  about 1 ms less at 44.1 kHz.
+- On Android 12+ the mixer tells the CPU governor how long its blocks take
+  (ADPF), so the clock goes up before a heavy block runs late.
+- On Android 13+ the waveforms are drawn ahead by the time a frame takes to
+  reach the screen (17 ms at 120 Hz), so the beat under the playhead is the
+  one being heard.
+- Pad rolls start on the grid, like beat loops: a press that reaches the deck
+  a little late still repeats from the beat.
+- With KEY on, a jog nudge is heard at once, as a short pitch bend while it
+  lasts, instead of only after some 11 ms of offset.
+
+### Added
+
+- Bluetooth: the app asks the link for its low-latency mode (Android 14+;
+  LE Audio and some A2DP headsets have one) and turns spatial audio off for
+  its stream. Wired outputs are unchanged. "Phone default" on a Bluetooth
+  device now selects it outright, so it dropping out pauses the decks instead
+  of moving the set to the phone speaker.
+
 ## 0.7.1
 
 Less delay between the FLX4 and the sound.

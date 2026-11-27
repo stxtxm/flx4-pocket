@@ -18,6 +18,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -145,6 +146,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             ui.postDelayed(this, TICK_MS)
         }
     }
+    /** Android 13+: how long a frame waits to be shown, which the waveforms draw ahead by. */
+    private val frameLead = if (Build.VERSION.SDK_INT >= 33) FrameLead { lead -> waves.forEach { it.lead = lead } } else null
     private val taps = Array(2) { ArrayList<Long>() }
     private val lastLoadPress = LongArray(2)
     private val fxChannels = booleanArrayOf(true, true)
@@ -224,10 +227,12 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         // Back in the app: a track deleted from the phone meanwhile drops out of the list.
         if (hasMusic()) scanLibrary()
         Choreographer.getInstance().postFrameCallback(this)
+        frameLead?.start()
     }
 
     override fun onPause() {
         Choreographer.getInstance().removeFrameCallback(this)
+        frameLead?.stop()
         super.onPause()
     }
 
@@ -713,12 +718,25 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         if (name != null) toast("$name connected") else tempoFaders.fill(Double.NaN)
     }
 
+    // Flx4Midi calls these on its MIDI thread, the tests on the main one. What changes the sound is done
+    // there at once, through the decks' own locks and volatile fields; anything that touches a View, the
+    // LEDs or the activity's own state goes through onMain.
+
+    /** Runs [block] on the main thread: at once when already there, else ahead of any pending layout. */
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() === Looper.getMainLooper()) block()
+        else ui.sendMessage(Message.obtain(ui, Runnable(block)).apply { isAsynchronous = true })
+    }
+
     override fun onButton(deck: Int, button: Flx4Button, down: Boolean) {
         val d = engine.decks.getOrNull(deck)
         when (button) {
             Flx4Button.CUE -> if (down) d?.cueDown() else d?.cueUp()
             Flx4Button.JOG_TOUCH -> if (down) d?.scratchBegin() else d?.scratchEnd()
-            Flx4Button.FX_CHANNEL -> {
+            Flx4Button.PLAY -> if (down && d != null) {
+                if (d.hasTrack()) d.togglePlay() else onMain { onLoadRequest(deck) }
+            }
+            Flx4Button.FX_CHANNEL -> onMain {
                 // A three-position switch: CH1, CH2, or both for the master.
                 fxChannels[deck] = down
                 engine.fxTarget = when {
@@ -727,9 +745,9 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
                     else -> AudioEngine.FX_MASTER
                 }
             }
-            else -> if (down) onPress(deck, d, button)
+            else -> if (down) onMain { onPress(deck, d, button) }
         }
-        answer(deck)
+        onMain { answer(deck) }
     }
 
     /** The FLX4's LEDs answer a control at once, and the screen on its next frame, not on its next refresh. */
@@ -741,7 +759,6 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     private fun onPress(deck: Int, d: Deck?, button: Flx4Button) {
         when (button) {
-            Flx4Button.PLAY -> onPlay(deck)
             Flx4Button.TO_START -> d?.seekTo(0.0)
             Flx4Button.SYNC -> onSync(deck)
             Flx4Button.MASTER -> onMaster(deck)
@@ -792,7 +809,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         val d = engine.decks.getOrNull(deck)
         when (knob) {
             // The fader's low end is its "+" side: 0 is fastest, 1 is slowest.
-            Flx4Knob.TEMPO -> if (d != null) tempoFader(deck, d, 1.0 - Math.round(value * 16383.0) / 8192.0) // code 8192: exactly 0 %, as in Mixxx
+            Flx4Knob.TEMPO -> if (d != null) onMain { tempoFader(deck, d, 1.0 - Math.round(value * 16383.0) / 8192.0) } // code 8192: exactly 0 %, as in Mixxx
             Flx4Knob.TRIM -> d?.trim = value
             Flx4Knob.EQ_HIGH -> d?.eqHigh = value
             Flx4Knob.EQ_MID -> d?.eqMid = value
@@ -840,10 +857,11 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
             Flx4Jog.BEND -> d.bend(delta)
             Flx4Jog.SEARCH -> d.seekBy(delta * 0.2)
         }
-        waves[deck].invalidate() // a paused deck's waveform otherwise follows the jog 20 times a second
+        // Any thread; a paused deck's waveform otherwise follows the jog 20 times a second.
+        waves[deck].postInvalidateOnAnimation()
     }
 
-    override fun onPadMode(deck: Int, mode: Int) {
+    override fun onPadMode(deck: Int, mode: Int) = onMain {
         when (mode) {
             Deck.PAD_SAMPLER -> toast(getString(R.string.not_supported, "Sampler"))
             Deck.PAD_KEYBOARD -> toast(getString(R.string.not_supported, "Keyboard mode"))
@@ -855,19 +873,22 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onPad(deck: Int, mode: Int, pad: Int, shift: Boolean, down: Boolean) {
         val d = engine.decks[deck]
-        if (!down) {
+        if (down) {
+            // The pads play the FLX4's own mode, which it keeps across an app restart: its LEDs follow it.
+            if (mode != d.padMode && mode != Deck.PAD_SAMPLER && mode != Deck.PAD_KEYBOARD && mode != Deck.PAD_KEY_SHIFT) d.padMode = mode
+            d.padDown(mode, pad, shift)
+        } else {
             d.padUp(mode, pad)
-            answer(deck)
-            return
         }
-        // The pads play the FLX4's own mode, which it keeps across an app restart: its LEDs follow it.
-        if (mode != d.padMode && mode != Deck.PAD_SAMPLER && mode != Deck.PAD_KEYBOARD && mode != Deck.PAD_KEY_SHIFT) d.padMode = mode
-        d.padDown(mode, pad, shift)
-        if (mode == Deck.PAD_HOT_CUE) onCuesChanged(deck)
-        answer(deck)
+        onMain {
+            if (down && mode == Deck.PAD_HOT_CUE) onCuesChanged(deck)
+            answer(deck)
+        }
     }
 
-    override fun onBrowse(delta: Int, shift: Boolean) {
+    override fun onBrowse(delta: Int, shift: Boolean) = onMain { browse(delta, shift) }
+
+    private fun browse(delta: Int, shift: Boolean) {
         if (!libraryVisible) {
             // The first click only shows where the selection is.
             showLibrary(true)

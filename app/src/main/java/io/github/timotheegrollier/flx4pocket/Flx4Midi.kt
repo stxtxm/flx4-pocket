@@ -9,12 +9,14 @@ import android.media.midi.MidiOutputPort
 import android.media.midi.MidiReceiver
 import android.os.Handler
 import android.os.Looper
-import android.os.Message
+import android.os.Process
 import android.util.Log
 
 /**
  * USB MIDI transport for the DDJ-FLX4: finds the controller, feeds its bytes
- * to a [Flx4Decoder] on the main thread and sends LED / meter messages back.
+ * to a [Flx4Decoder] on the port's own reader thread, so the listener hears a
+ * move without waiting for the screen, and sends LED / meter messages back
+ * from the main thread.
  */
 class Flx4Midi(context: Context, private val listener: Flx4Listener) {
 
@@ -58,12 +60,17 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
         }
     }
 
-    private val receiver = object : MidiReceiver() {
+    /** One per output port: each port has its own reader thread, which decodes and calls the listener. */
+    private inner class Receiver : MidiReceiver() {
+        private var boosted = false
+
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
-            // The framework reuses msg after this call returns.
-            val copy = msg.copyOfRange(offset, offset + count)
-            // Asynchronous: while a view waits to be laid out, ordinary messages are held until the next frame.
-            handler.sendMessage(Message.obtain(handler) { decoder.feed(copy) }.apply { isAsynchronous = true })
+            if (!boosted) {
+                // The reader starts at normal priority, behind the screen and the track decoders.
+                Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+                boosted = true
+            }
+            synchronized(decoder) { decoder.feed(msg, offset, count) }
         }
     }
 
@@ -130,7 +137,7 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
                             // its "output" is what we read, its "input" what we write.
                             MidiDeviceInfo.PortInfo.TYPE_OUTPUT ->
                                 opened.openOutputPort(port.portNumber)?.let {
-                                    it.connect(receiver)
+                                    it.connect(Receiver())
                                     outputs.add(it)
                                 }
 
@@ -144,7 +151,7 @@ class Flx4Midi(context: Context, private val listener: Flx4Listener) {
                     }
                 }
                 sent.clear()
-                decoder.reset()
+                synchronized(decoder) { decoder.reset() }
                 // "Track loaded" jog illumination doubles as a connection hello.
                 send(0x90 or MidiMap.CH_LOADED, 0x00, 0x7F)
                 send(0x90 or MidiMap.CH_LOADED, 0x01, 0x7F)

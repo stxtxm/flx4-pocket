@@ -132,14 +132,21 @@ different key under the same application id.
   measurement on a Pixel 9a: if yours differ, they are what to report.
 - What remains is outside an app without native code: Android's fast mixer,
   the USB link and the controller's converter (10 to 18 ms), the app's own two
-  blocks of buffer (it grows by a block after an underrun and gives it back
+  bursts of buffer (it grows by a block after an underrun and gives it back
   after 10 s without one, so it settles on the smallest the output takes
   without glitches, and a single stall does not cost the rest of the set),
   and a Java thread that
-  cannot get real-time priority. Bluetooth adds 150 ms or more and is not
-  usable to mix. This is a controller app, not a hard real-time CDJ.
-- The waveforms are drawn that reported delay behind the mixer, so the beat
-  under the playhead is the beat being heard.
+  cannot get real-time priority (an ADPF hint asks for the clock instead).
+  This is a controller app, not a hard real-time CDJ.
+- **Bluetooth.** Classic Bluetooth audio (A2DP) adds 150 to 300 ms that no app
+  can remove: it is the codec, the radio and the headset's own buffer. The app
+  asks for the link's low-latency mode (Android 14+, a fast stream with the
+  game usage); only LE Audio headsets and some A2DP ones have one, and they
+  then add some 30 to 60 ms. The status line shows the result. Even then it is
+  not usable for scratching or jog cueing; to mix, listen on the FLX4.
+- The waveforms are drawn that reported delay behind the mixer, and on
+  Android 13+ ahead by the time a frame takes to reach the screen, so the beat
+  under the playhead is the beat being heard when it is seen.
 - **Sound.** A track at 0 % on an output at its own rate, read from its
   start, is played sample for sample. Between two samples (another speed, an
   output at another rate, and after a jump, a loop or a sync correction) it

@@ -1,5 +1,6 @@
 package io.github.timotheegrollier.flx4pocket
 
+import android.annotation.TargetApi
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -7,6 +8,7 @@ import android.graphics.Path
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -53,6 +55,9 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     /** Seconds the output delays the sound: the waveform shows what is heard, not what is being mixed. */
     var latency = 0.0
+
+    /** Seconds until the frame being drawn is on screen; 0 where Android does not say. */
+    var lead = 0.0
 
     /** False while the library is open over the decks: a resting finger must not hold a playing track. */
     var scratchable = true
@@ -112,7 +117,7 @@ class WaveformView @JvmOverloads constructor(context: Context, attrs: AttributeS
         val dt = if (still) 0.0 else ((now - lastFrameNanos) / 1e9).coerceIn(0.0, 0.1)
         lastFrameNanos = now
         val speed = d.speed
-        val actual = d.positionSec - latency * speed
+        val actual = d.positionSec - (latency - lead) * speed // as heard when this frame reaches the screen
         shown += dt * speed
         val error = actual - shown
         if (speed == 0.0 || abs(error) > 0.25) shown = actual else shown += error * 0.15
@@ -421,5 +426,18 @@ class OverviewView @JvmOverloads constructor(context: Context, attrs: AttributeS
             invalidate()
         }
         return true
+    }
+}
+
+/** Reports, every frame, how long the frame being drawn will wait before it is on screen. */
+@TargetApi(33)
+class FrameLead(private val onLead: (Double) -> Unit) : Choreographer.VsyncCallback {
+    fun start() = Choreographer.getInstance().postVsyncCallback(this)
+
+    fun stop() = Choreographer.getInstance().removeVsyncCallback(this)
+
+    override fun onVsync(data: Choreographer.FrameData) {
+        start()
+        onLead(((data.preferredFrameTimeline.expectedPresentationTimeNanos - System.nanoTime()) / 1e9).coerceIn(0.0, 0.1))
     }
 }

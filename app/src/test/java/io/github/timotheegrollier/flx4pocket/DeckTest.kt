@@ -479,6 +479,16 @@ class DeckTest {
     }
 
     @Test
+    fun `a roll pressed just after the beat repeats from the beat`() {
+        deck.seekTo(2.03) // 30 ms late: the press reached the deck after the beat at 2.0 s
+        deck.togglePlay()
+        deck.padDown(Deck.PAD_FX1, 5) // ROLL 1/4 beat = 0.125 s
+        play(0.5)
+        assertTrue("on the grid, not where it was pressed", deck.positionSec in 2.0..2.125)
+        deck.padUp(Deck.PAD_FX1, 5)
+    }
+
+    @Test
     fun `pad fx is held on and released`() {
         deck.padDown(Deck.PAD_FX2, 2)
         assertTrue(deck.padFx.enabled)

@@ -1,5 +1,6 @@
 package io.github.timotheegrollier.flx4pocket
 
+import android.annotation.TargetApi
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
@@ -10,6 +11,7 @@ import android.media.AudioMixerAttributes
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Build
+import android.os.PerformanceHintManager
 import android.os.Process
 import android.util.Log
 import java.nio.channels.FileChannel
@@ -104,6 +106,7 @@ class AudioEngine(context: Context) {
         private set
 
     private val levels = FloatArray(2)
+    private val appContext: Context = context.applicationContext
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private var track: AudioTrack? = null
     private var worker: Thread? = null
@@ -195,6 +198,13 @@ class AudioEngine(context: Context) {
                 } else {
                     stereo?.release()
                 }
+            }
+            // "Phone default" on a Bluetooth headset or speaker: chosen outright, for its low-latency request
+            // (see BLUETOOTH), and so that it dropping out pauses the decks instead of moving the set to the speaker.
+            val routed = if (target == null) out.routedDevice else null
+            if (routed != null && isBluetoothSink(routed)) {
+                out.release()
+                return selectOutput(routed)
             }
             device = target
             track = out
@@ -324,10 +334,10 @@ class AudioEngine(context: Context) {
         // four-channel output started on a buffer several times the minimum.)
         val channelMask = if (channels == 4) AudioFormat.CHANNEL_OUT_QUAD else AudioFormat.CHANNEL_OUT_STEREO
         val minFrames = AudioTrack.getMinBufferSize(rate, channelMask, AudioFormat.ENCODING_PCM_FLOAT)
-            .takeIf { it > 0 }?.div(4 * channels) ?: BLOCK * MIN_BUFFER_BLOCKS
+            .takeIf { it > 0 }?.div(4 * channels) ?: startFrames(rate)
         val capacityFrames = max(minFrames, BLOCK * MAX_BUFFER_BLOCKS)
         val out = AudioTrack.Builder()
-            .setAudioAttributes(MEDIA)
+            .setAudioAttributes(if (target != null && isBluetoothSink(target)) BLUETOOTH else MEDIA)
             .setAudioFormat(format)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(capacityFrames * 4 * channels)
@@ -339,7 +349,7 @@ class AudioEngine(context: Context) {
         }
         // Before play(), never after: a resize can be refused on a running track, which used
         // to leave its whole (large) capacity in the path and made the mix sound far too late.
-        val wanted = BLOCK * MIN_BUFFER_BLOCKS
+        val wanted = startFrames(rate)
         val tuned = out.setBufferSizeInFrames(wanted)
         Log.i(
             TAG,
@@ -381,12 +391,12 @@ class AudioEngine(context: Context) {
         var lastGainA = 0f
         var lastGainB = 0f
 
-        // Latency tuning (as in Oboe): play on two blocks of buffer and add a block after each
+        // Latency tuning (as in Oboe): play on two bursts of buffer and add a block after each
         // underrun, so the mix plays as soon after a move as this output allows. The stream was
         // already tuned before play(); setting it again here covers an output that reset it when
         // the track started. Growth stops at MAX_BUFFER_BLOCKS: a bad stretch must not turn the
         // mixer into a delayed echo for the rest of the set.
-        var bufferFrames = out.setBufferSizeInFrames(BLOCK * MIN_BUFFER_BLOCKS).takeIf { it > 0 }
+        var bufferFrames = out.setBufferSizeInFrames(startFrames(rate)).takeIf { it > 0 }
             ?: out.bufferSizeInFrames
         val maxBufferFrames = minOf(out.bufferCapacityInFrames, BLOCK * MAX_BUFFER_BLOCKS)
         Log.i(
@@ -404,8 +414,10 @@ class AudioEngine(context: Context) {
         val stamp = AudioTimestamp()
         var framesWritten = 0L
         latencyMs = 0
+        val hint = if (Build.VERSION.SDK_INT >= 31) MixHint(appContext, HINT_TARGET_NS) else null
 
         while (running) {
+            val began = System.nanoTime()
             // As in rekordbox, a master deck that stops hands the role to the one still playing: the
             // deck on air never follows a track being loaded, cued or started under it. A deck the DJ
             // has synced is the exception: it follows the master the DJ picked, playing or not, so
@@ -507,6 +519,7 @@ class AudioEngine(context: Context) {
             meterR = fall(peakR, meterR, meterFall)
             if (tape != null) recorder?.put(tape)
 
+            hint?.report(System.nanoTime() - began) // the mixing only: the write mostly waits
             val written = try {
                 out.write(output, 0, output.size, AudioTrack.WRITE_BLOCKING)
             } catch (e: Exception) {
@@ -547,6 +560,7 @@ class AudioEngine(context: Context) {
                 }
             }
         }
+        hint?.close()
     }
 
     companion object {
@@ -555,9 +569,19 @@ class AudioEngine(context: Context) {
         const val FX_MASTER = 2
         private const val BLOCK = 256
 
-        /** Blocks of buffer the mixer starts on and may grow to after underruns. */
-        private const val MIN_BUFFER_BLOCKS = 2
+        /** Blocks of buffer the mixer may grow to after underruns. */
         private const val MAX_BUFFER_BLOCKS = 6
+
+        /**
+         * Buffer the stream starts on: two of the bursts Android's USB output pulls at a time (a 5 ms
+         * period rounded to 16 frames: 224 at 44.1 kHz, 240 at 48), not two whole blocks.
+         * shortcut: the 5 ms is AOSP's USB HAL, not read from the phone; an output that pulls more at a
+         * time underruns once, and the buffer then grows by a block as before.
+         */
+        private fun startFrames(rate: Int) = 2 * ((rate / 200 + 15) and 15.inv())
+
+        /** What mixing a block should take: about 0.3 ms at full clock, so 1 ms leaves most of a block spare. */
+        private const val HINT_TARGET_NS = 1_000_000L
 
         /** Seconds without an underrun before the buffer gives a block back. */
         private const val SHRINK_AFTER_S = 10
@@ -576,12 +600,30 @@ class AudioEngine(context: Context) {
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
 
+        /**
+         * Bluetooth only, wired outputs keep [MEDIA]. From Android 14 a fast stream with the game usage
+         * asks the Bluetooth link for its low-latency mode, where the headset and its codec have one (LE
+         * Audio, some A2DP); never spatialized, since head tracking and virtualizing add delay.
+         */
+        private val BLUETOOTH = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .apply { if (Build.VERSION.SDK_INT >= 32) setSpatializationBehavior(AudioAttributes.SPATIALIZATION_BEHAVIOR_NEVER) }
+            .build()
+
+        private val BLUETOOTH_TYPES = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER, AudioDeviceInfo.TYPE_BLE_BROADCAST
+        )
+
         /** Sample formats a USB mixer may offer, worst to best. */
         private val MIXER_ENCODINGS = intArrayOf(
             AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_24BIT_PACKED,
             AudioFormat.ENCODING_PCM_32BIT, AudioFormat.ENCODING_PCM_FLOAT
         )
         private const val TAG = "Flx4Audio"
+
+        fun isBluetoothSink(info: AudioDeviceInfo): Boolean = info.isSink && info.type in BLUETOOTH_TYPES
 
         fun isUsbSink(info: AudioDeviceInfo): Boolean = info.isSink &&
             (info.type == AudioDeviceInfo.TYPE_USB_DEVICE || info.type == AudioDeviceInfo.TYPE_USB_HEADSET)
@@ -590,5 +632,26 @@ class AudioEngine(context: Context) {
             info.channelCounts.any { it >= 4 } ||
                 info.channelIndexMasks.any { Integer.bitCount(it) >= 4 } ||
                 info.channelMasks.any { Integer.bitCount(it) >= 4 }
+    }
+}
+
+/**
+ * ADPF (Android 12+): tells the scheduler how long mixing a block may take, so it raises the clock or
+ * moves the mixer to a bigger core before a block runs late, not after an underrun. Created on the mixer.
+ * A class of its own so that no method of the engine refers to an API older phones lack.
+ */
+@TargetApi(31)
+private class MixHint(context: Context, targetNanos: Long) {
+    private val session = runCatching {
+        context.getSystemService(PerformanceHintManager::class.java)
+            ?.createHintSession(intArrayOf(Process.myTid()), targetNanos)
+    }.getOrNull()
+
+    fun report(nanos: Long) {
+        if (nanos > 0) runCatching { session?.reportActualWorkDuration(nanos) }
+    }
+
+    fun close() {
+        runCatching { session?.close() }
     }
 }

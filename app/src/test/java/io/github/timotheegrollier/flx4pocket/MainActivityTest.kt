@@ -3,6 +3,7 @@ package io.github.timotheegrollier.flx4pocket
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
@@ -20,6 +21,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.android.controller.ActivityController
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowChoreographer
 import java.io.File
 
@@ -374,6 +376,24 @@ class MainActivityTest {
         assertEquals("3/4", activity.findViewById<TextView>(R.id.fx_beats).text.toString())
         assertEquals("CH A", activity.findViewById<TextView>(R.id.fx_target).text.toString())
         assertEquals(activity.getColor(R.color.accent), fxOn.backgroundTintList!!.defaultColor)
+    }
+
+    @Test
+    fun `controller moves from the MIDI thread reach the decks at once`() {
+        val activity = launch().get()
+        val midi = Thread {
+            activity.onKnob(0, Flx4Knob.EQ_LOW, 0f)
+            activity.onKnob(-1, Flx4Knob.CROSSFADER, 1f)
+            activity.onJog(0, Flx4Jog.BEND, 3)
+            activity.onButton(0, Flx4Button.CUE, true)
+            activity.onButton(0, Flx4Button.CUE, false)
+            activity.onPad(0, Deck.PAD_HOT_CUE, 0, shift = false, down = true)
+        }
+        midi.start()
+        midi.join()
+        assertEquals(0f, activity.engine.decks[0].eqLow)
+        assertEquals(1f, activity.engine.crossfader)
+        shadowOf(Looper.getMainLooper()).idle() // the LEDs and the screen answer on the main thread
     }
 
     @Test

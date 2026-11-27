@@ -22,6 +22,10 @@ enum class Flx4Knob {
 
 enum class Flx4Jog { SCRATCH, BEND, SEARCH }
 
+/**
+ * [Flx4Midi] calls these on its MIDI thread, [onMidiStatus] on the main thread.
+ * Whatever touches a View, the LEDs or main-thread state must get there itself.
+ */
 interface Flx4Listener {
     fun onMidiStatus(name: String?) {}
     fun onButton(deck: Int, button: Flx4Button, down: Boolean) {}
