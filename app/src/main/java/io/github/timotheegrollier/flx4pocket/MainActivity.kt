@@ -593,7 +593,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         }
         // The rate and "fast" (Android's low-latency path) say what the measured delay is made of.
         val path = "${(engine.sampleRate / 1000.0).toString().removeSuffix(".0")} kHz${if (engine.lowLatency) " fast" else ""}"
-        val latency = if (engine.latencyMs > 0) "  ·  ${engine.latencyMs} ms" else ""
+        val latency = (if (engine.latencyMs > 0) "  ·  ${engine.latencyMs} ms" else "") +
+            if (engine.dropouts > 0) "  ·  ${engine.dropouts} dropouts" else ""
         statusLabel.show("${midiName ?: getString(R.string.status_no_controller)}  ·  $output ($layout)  ·  $path$latency")
         statusLabel.setTextColor(getColor(if (midiName != null) R.color.ok else R.color.text_dim))
     }
@@ -724,16 +725,26 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     /** Runs [block] on the main thread: at once when already there, else ahead of any pending layout. */
     private fun onMain(block: () -> Unit) {
-        if (Looper.myLooper() === Looper.getMainLooper()) block()
-        else ui.sendMessage(Message.obtain(ui, Runnable(block)).apply { isAsynchronous = true })
+        if (Looper.myLooper() === Looper.getMainLooper()) return block()
+        queued.incrementAndGet()
+        ui.sendMessage(Message.obtain(ui) { try { block() } finally { queued.decrementAndGet() } }.apply { isAsynchronous = true })
     }
+
+    /** Controller actions still waiting for the main thread. */
+    private val queued = AtomicInteger()
+
+    /**
+     * Runs [block] at once on the MIDI thread, unless an earlier press still waits for the main thread:
+     * then it queues behind it, so SYNC then PLAY, or LOOP IN then the jog, act in the order they were made.
+     */
+    private inline fun direct(crossinline block: () -> Unit) = if (queued.get() == 0) block() else onMain { block() }
 
     override fun onButton(deck: Int, button: Flx4Button, down: Boolean) {
         val d = engine.decks.getOrNull(deck)
         when (button) {
-            Flx4Button.CUE -> if (down) d?.cueDown() else d?.cueUp()
-            Flx4Button.JOG_TOUCH -> if (down) d?.scratchBegin() else d?.scratchEnd()
-            Flx4Button.PLAY -> if (down && d != null) {
+            Flx4Button.CUE -> direct { if (down) d?.cueDown() else d?.cueUp() }
+            Flx4Button.JOG_TOUCH -> direct { if (down) d?.scratchBegin() else d?.scratchEnd() }
+            Flx4Button.PLAY -> if (down && d != null) direct {
                 if (d.hasTrack()) d.togglePlay() else onMain { onLoadRequest(deck) }
             }
             Flx4Button.FX_CHANNEL -> onMain {
@@ -852,10 +863,12 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onJog(deck: Int, jog: Flx4Jog, delta: Int) {
         val d = engine.decks[deck]
+        direct {
         when (jog) {
             Flx4Jog.SCRATCH -> if (d.scratching) d.scratchMove(delta * Deck.JOG_TICK_SECONDS) else d.bend(delta)
             Flx4Jog.BEND -> d.bend(delta)
             Flx4Jog.SEARCH -> d.seekBy(delta * 0.2)
+        }
         }
         // Any thread; a paused deck's waveform otherwise follows the jog 20 times a second.
         waves[deck].postInvalidateOnAnimation()
@@ -873,12 +886,14 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onPad(deck: Int, mode: Int, pad: Int, shift: Boolean, down: Boolean) {
         val d = engine.decks[deck]
+        direct {
         if (down) {
             // The pads play the FLX4's own mode, which it keeps across an app restart: its LEDs follow it.
             if (mode != d.padMode && mode != Deck.PAD_SAMPLER && mode != Deck.PAD_KEYBOARD && mode != Deck.PAD_KEY_SHIFT) d.padMode = mode
             d.padDown(mode, pad, shift)
         } else {
             d.padUp(mode, pad)
+        }
         }
         onMain {
             if (down && mode == Deck.PAD_HOT_CUE) onCuesChanged(deck)

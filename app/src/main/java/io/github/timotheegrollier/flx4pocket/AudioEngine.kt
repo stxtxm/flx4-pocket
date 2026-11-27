@@ -100,6 +100,11 @@ class AudioEngine(context: Context) {
     var latencyMs: Int = 0
         private set
 
+    /** Dropouts (underruns) since this output was opened: each one was heard as a click or a gap. */
+    @Volatile
+    var dropouts: Int = 0
+        private set
+
     /** The recording in progress, or null. */
     @Volatile
     var recorder: Recorder? = null
@@ -111,6 +116,7 @@ class AudioEngine(context: Context) {
     private var track: AudioTrack? = null
     private var worker: Thread? = null
     private var device: AudioDeviceInfo? = null
+    private var plainDefault = false
 
     @Volatile
     private var running = false
@@ -202,9 +208,15 @@ class AudioEngine(context: Context) {
             // "Phone default" on a Bluetooth headset or speaker: chosen outright, for its low-latency request
             // (see BLUETOOTH), and so that it dropping out pauses the decks instead of moving the set to the speaker.
             val routed = if (target == null) out.routedDevice else null
-            if (routed != null && isBluetoothSink(routed)) {
+            if (routed != null && isBluetoothSink(routed) && !plainDefault) {
                 out.release()
-                return selectOutput(routed)
+                selectOutput(routed)
+                if (error != null) {
+                    // The headset refused the stream opened for it: back to plain default routing, which played.
+                    plainDefault = true
+                    try { selectOutput(null) } finally { plainDefault = false }
+                }
+                return
             }
             device = target
             track = out
@@ -334,7 +346,7 @@ class AudioEngine(context: Context) {
         // four-channel output started on a buffer several times the minimum.)
         val channelMask = if (channels == 4) AudioFormat.CHANNEL_OUT_QUAD else AudioFormat.CHANNEL_OUT_STEREO
         val minFrames = AudioTrack.getMinBufferSize(rate, channelMask, AudioFormat.ENCODING_PCM_FLOAT)
-            .takeIf { it > 0 }?.div(4 * channels) ?: startFrames(rate)
+            .takeIf { it > 0 }?.div(4 * channels) ?: startFrames(rate, target)
         val capacityFrames = max(minFrames, BLOCK * MAX_BUFFER_BLOCKS)
         val out = AudioTrack.Builder()
             .setAudioAttributes(if (target != null && isBluetoothSink(target)) BLUETOOTH else MEDIA)
@@ -349,7 +361,7 @@ class AudioEngine(context: Context) {
         }
         // Before play(), never after: a resize can be refused on a running track, which used
         // to leave its whole (large) capacity in the path and made the mix sound far too late.
-        val wanted = startFrames(rate)
+        val wanted = startFrames(rate, target)
         val tuned = out.setBufferSizeInFrames(wanted)
         Log.i(
             TAG,
@@ -396,7 +408,7 @@ class AudioEngine(context: Context) {
         // already tuned before play(); setting it again here covers an output that reset it when
         // the track started. Growth stops at MAX_BUFFER_BLOCKS: a bad stretch must not turn the
         // mixer into a delayed echo for the rest of the set.
-        var bufferFrames = out.setBufferSizeInFrames(startFrames(rate)).takeIf { it > 0 }
+        var bufferFrames = out.setBufferSizeInFrames(startFrames(rate, device)).takeIf { it > 0 }
             ?: out.bufferSizeInFrames
         val maxBufferFrames = minOf(out.bufferCapacityInFrames, BLOCK * MAX_BUFFER_BLOCKS)
         Log.i(
@@ -404,6 +416,8 @@ class AudioEngine(context: Context) {
             "Output $rate Hz, $channels ch, low latency $lowLatency, buffer $bufferFrames of $maxBufferFrames frames"
         )
         var underruns = out.underrunCount
+        val underrunsAtStart = underruns
+        dropouts = 0
         // The buffer steps back down after a quiet stretch: one stall (the first PLAY, before the JIT has
         // compiled the mixer) must not cost the rest of the set. A size that underruns again once reached by
         // stepping down is too small on this phone, and the buffer stays above it from then on.
@@ -533,6 +547,7 @@ class AudioEngine(context: Context) {
             framesWritten += BLOCK
             if (out.underrunCount > underruns) {
                 underruns = out.underrunCount
+                dropouts = underruns - underrunsAtStart
                 calm = 0
                 if (shrunk) floorFrames = minOf(maxBufferFrames, bufferFrames + BLOCK)
                 shrunk = false
@@ -541,10 +556,11 @@ class AudioEngine(context: Context) {
                     bufferFrames = out.setBufferSizeInFrames(grown).takeIf { it > 0 } ?: bufferFrames
                     Log.w(TAG, "Underrun: buffer grown to $bufferFrames frames")
                 }
-            } else if (++calm >= calmBlocks && bufferFrames > floorFrames) {
+            } else if (++calm >= calmBlocks && bufferFrames > floorFrames && !deckA.playing && !deckB.playing) {
+                // Only between tracks: if the smaller size fails again, it fails in silence, never on air.
                 calm = 0
                 shrunk = true
-                bufferFrames = out.setBufferSizeInFrames(bufferFrames - BLOCK).takeIf { it > 0 } ?: bufferFrames
+                bufferFrames = out.setBufferSizeInFrames(maxOf(floorFrames, bufferFrames - BLOCK)).takeIf { it > 0 } ?: bufferFrames
                 Log.i(TAG, "Quiet: buffer back down to $bufferFrames frames")
             }
             if (framesWritten % (BLOCK * 64) == 0L) {
@@ -573,12 +589,14 @@ class AudioEngine(context: Context) {
         private const val MAX_BUFFER_BLOCKS = 6
 
         /**
-         * Buffer the stream starts on: two of the bursts Android's USB output pulls at a time (a 5 ms
-         * period rounded to 16 frames: 224 at 44.1 kHz, 240 at 48), not two whole blocks.
+         * Buffer the stream starts on. USB: two of the bursts Android's USB output pulls at a time (a 5 ms
+         * period rounded to 16 frames: 224 at 44.1 kHz, 240 at 48). Any other output: two blocks, as before,
+         * since their bursts differ and a smaller start left them less room than they had.
          * shortcut: the 5 ms is AOSP's USB HAL, not read from the phone; an output that pulls more at a
          * time underruns once, and the buffer then grows by a block as before.
          */
-        private fun startFrames(rate: Int) = 2 * ((rate / 200 + 15) and 15.inv())
+        private fun startFrames(rate: Int, target: AudioDeviceInfo?) =
+            if (target != null && isUsbSink(target)) 2 * ((rate / 200 + 15) and 15.inv()) else 2 * BLOCK
 
         /** What mixing a block should take: about 0.3 ms at full clock, so 1 ms leaves most of a block spare. */
         private const val HINT_TARGET_NS = 1_000_000L

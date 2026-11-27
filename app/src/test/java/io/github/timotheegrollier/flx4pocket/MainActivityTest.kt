@@ -381,16 +381,24 @@ class MainActivityTest {
     @Test
     fun `controller moves from the MIDI thread reach the decks at once`() {
         val activity = launch().get()
+        var failure: Throwable? = null
         val midi = Thread {
+          try {
             activity.onKnob(0, Flx4Knob.EQ_LOW, 0f)
             activity.onKnob(-1, Flx4Knob.CROSSFADER, 1f)
             activity.onJog(0, Flx4Jog.BEND, 3)
             activity.onButton(0, Flx4Button.CUE, true)
             activity.onButton(0, Flx4Button.CUE, false)
             activity.onPad(0, Deck.PAD_HOT_CUE, 0, shift = false, down = true)
+            activity.onButton(0, Flx4Button.SYNC, true) // waits for the main thread
+            activity.onButton(0, Flx4Button.PLAY, true) // so this one queues behind it
+          } catch (e: Throwable) {
+            failure = e
+          }
         }
         midi.start()
         midi.join()
+        assertEquals(null, failure)
         assertEquals(0f, activity.engine.decks[0].eqLow)
         assertEquals(1f, activity.engine.crossfader)
         shadowOf(Looper.getMainLooper()).idle() // the LEDs and the screen answer on the main thread

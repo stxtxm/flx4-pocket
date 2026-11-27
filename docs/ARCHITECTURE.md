@@ -61,9 +61,10 @@ reports. A four-channel stream that misses the fast path where a stereo one
 gets it is on an output Android mixes in stereo, which drops channels 3-4
 anyway: the engine then plays stereo.
 
-**Buffer.** The stream starts on two bursts of buffer (2 x 5 ms, AOSP's USB
-period, rounded to 16 frames), grows by one block after an
-underrun (up to six) and gives one back after 10 s without an underrun. A size
+**Buffer.** On USB the stream starts on two bursts of buffer (2 x 5 ms, AOSP's
+USB period, rounded to 16 frames), elsewhere on two blocks; it grows by one block after an
+underrun (up to six) and gives one back after 10 s without an underrun, while
+no deck plays and never below its starting size. A size
 that underruns again once reached that way is not tried again. Every 64
 blocks the engine sets the size again, since a track Android re-creates comes
 back on its whole capacity.
@@ -71,7 +72,8 @@ back on its whole capacity.
 **Controller input.** MIDI bytes are decoded on the MIDI port's own reader
 thread, raised to audio priority. What changes the sound (knobs and faders
 except TEMPO, the jogs, CUE, PLAY on a loaded deck, JOG touch, the pads) is
-applied there at once, through the decks' locks and volatile fields; the rest,
+applied there at once, through the decks' locks and volatile fields, unless an
+earlier press still waits for the main thread (order is kept); the rest,
 the LEDs and every View go to the main thread as asynchronous messages, which
 a pending layout does not hold back.
 

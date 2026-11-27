@@ -1,8 +1,9 @@
-FLX4 Pocket 0.7.2
+FLX4 Pocket 0.7.3
 
-- Controller moves reach the decks on their own thread, without waiting for the screen: no extra delay while loading a track or browsing.
-- About 1 ms less output buffer, and on Android 12+ the phone raises its CPU clock before the mixer runs late.
-- On Android 13+ the waveforms make up for the screen's own delay too.
-- Pad rolls start on the beat, even when pressed a little late.
-- With KEY on, jog nudges are heard at once.
-- Bluetooth: the app asks for the headset's low-latency mode (Android 14+, LE Audio and some A2DP headsets). Classic Bluetooth still adds 150 ms or more: to mix, listen on the FLX4. Wired outputs are unchanged.
+Fixes found by a review of 0.7.1 and 0.7.2:
+
+- The output buffer only shrinks back between tracks, never while a deck plays, and never below its starting size: no extra dropout on air.
+- With KEY on, nudges keep the key again.
+- Controller presses always act in the order you made them (SYNC then PLAY, LOOP IN then the jog).
+- Phone speaker and Bluetooth start on the same buffer as 0.7.0.
+- The status line now counts sound dropouts, next to `fast` and the ms.

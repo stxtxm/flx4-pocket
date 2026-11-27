@@ -92,7 +92,7 @@ class Deck(val index: Int) {
     @Volatile
     var quantize: Boolean = true
 
-    /** Keylock (master tempo): the tempo fader and sync change the speed, not the pitch; a nudge bends both while it lasts. */
+    /** Keylock (master tempo): the tempo fader, sync and nudges change the speed, not the pitch. */
     @Volatile
     var keyLock: Boolean = false
 
@@ -834,9 +834,6 @@ class Deck(val index: Int) {
             playStep
         }
         speed = step / ratio
-        // With KEY a nudge is heard at once, as a short bend of the pitch: grains held at the track's pitch
-        // would only follow it once the playhead left their search window, up to 11 ms later.
-        val grainStep = ratio * (1.0 + nudge + jogBend)
 
         val wrap = rolling || loopActive
         val wrapStart = if (rolling) rollStart else loopInSec * rate
@@ -896,7 +893,7 @@ class Deck(val index: Int) {
                 val heard = src.sampleFrame(tailPos, sample)
                 l = l * (1.0 - w) + if (heard) sample[0] * w else 0.0
                 r = r * (1.0 - w) + if (heard) sample[1] * w else 0.0
-                tailPos += if (stretching) grainStep else ratio
+                tailPos += ratio
                 tailLeft--
             }
 
@@ -911,7 +908,7 @@ class Deck(val index: Int) {
             i++
 
             if (stretching) {
-                grainPos += grainStep
+                grainPos += ratio
                 grainLeft--
             }
             cursor += step

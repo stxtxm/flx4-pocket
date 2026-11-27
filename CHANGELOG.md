@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.3
+
+Fixes for what a review of 0.7.1 and 0.7.2 found.
+
+### Added
+
+- The status line counts the output's dropouts since it was opened
+  (`3 dropouts`), next to `fast` and the ms: what to report when the sound
+  clicks or lags.
+
+### Fixed
+
+- The output buffer only steps back down while no deck plays, and never below
+  the size it started on: a size that proves too small again fails in silence,
+  not on air. (0.7.1 could cause a second dropout mid-track, and after a bad
+  stretch step under its starting size.)
+- Outputs other than USB start on two blocks of buffer again, as in 0.7.0.
+- With KEY on, nudges keep the key again, as in 0.7.0 (0.7.2 bent the pitch).
+- Controller presses act in the order they were made: PLAY, CUE, the pads and
+  the jogs wait their turn when an earlier press (SYNC, LOAD, LOOP IN, the
+  TEMPO fader) has not been handled yet.
+- "Phone default" on a Bluetooth device that refuses its own stream falls back
+  to the default routing instead of going silent.
+
 ## 0.7.2
 
 The last of the small latency gains, and Bluetooth's low-latency mode.
