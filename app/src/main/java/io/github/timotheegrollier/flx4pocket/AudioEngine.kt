@@ -341,7 +341,7 @@ class AudioEngine(context: Context) {
             }
             .build()
         // The minimum is a recommendation for a glitch-free stream, not a floor: a streaming
-        // track may run on the two blocks the mixer writes at a time. The capacity leaves room
+        // track may run on the one block the mixer writes at a time. The capacity leaves room
         // to grow after an underrun. (It was multiplied by the channel count twice, so a
         // four-channel output started on a buffer several times the minimum.)
         val channelMask = if (channels == 4) AudioFormat.CHANNEL_OUT_QUAD else AudioFormat.CHANNEL_OUT_STEREO
@@ -403,7 +403,7 @@ class AudioEngine(context: Context) {
         var lastGainA = 0f
         var lastGainB = 0f
 
-        // Latency tuning (as in Oboe): play on two bursts of buffer and add a block after each
+        // Latency tuning (as in Oboe): play on one burst of buffer and add a block after each
         // underrun, so the mix plays as soon after a move as this output allows. The stream was
         // already tuned before play(); setting it again here covers an output that reset it when
         // the track started. Growth stops at MAX_BUFFER_BLOCKS: a bad stretch must not turn the
@@ -583,20 +583,20 @@ class AudioEngine(context: Context) {
         const val FX_DECK_A = 0
         const val FX_DECK_B = 1
         const val FX_MASTER = 2
-        private const val BLOCK = 256
+        private const val BLOCK = 128
 
-        /** Blocks of buffer the mixer may grow to after underruns. */
-        private const val MAX_BUFFER_BLOCKS = 6
+        /** Blocks of buffer the mixer may grow to after underruns. Kept the same total as BLOCK = 256 x 6. */
+        private const val MAX_BUFFER_BLOCKS = 12
 
         /**
-         * Buffer the stream starts on. USB: two of the bursts Android's USB output pulls at a time (a 5 ms
-         * period rounded to 16 frames: 224 at 44.1 kHz, 240 at 48). Any other output: two blocks, as before,
-         * since their bursts differ and a smaller start left them less room than they had.
+         * Buffer the stream starts on. USB: one of the bursts Android's USB output pulls at a time (a 5 ms
+         * period rounded to 16 frames: 224 at 44.1 kHz, 240 at 48). Any other output: one block, since the
+         * buffer grows by a block after an underrun and never shrinks below its starting size.
          * shortcut: the 5 ms is AOSP's USB HAL, not read from the phone; an output that pulls more at a
          * time underruns once, and the buffer then grows by a block as before.
          */
         private fun startFrames(rate: Int, target: AudioDeviceInfo?) =
-            if (target != null && isUsbSink(target)) 2 * ((rate / 200 + 15) and 15.inv()) else 2 * BLOCK
+            if (target != null && isUsbSink(target)) ((rate / 200 + 15) and 15.inv()) else BLOCK
 
         /** What mixing a block should take: about 0.3 ms at full clock, so 1 ms leaves most of a block spare. */
         private const val HINT_TARGET_NS = 1_000_000L

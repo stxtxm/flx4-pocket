@@ -1,9 +1,8 @@
-FLX4 Pocket 0.7.3
+FLX4 Pocket 0.7.4
 
-Fixes found by a review of 0.7.1 and 0.7.2:
+Lower app-side latency and persistent settings:
 
-- The output buffer only shrinks back between tracks, never while a deck plays, and never below its starting size: no extra dropout on air.
-- With KEY on, nudges keep the key again.
-- Controller presses always act in the order you made them (SYNC then PLAY, LOOP IN then the jog).
-- Phone speaker and Bluetooth start on the same buffer as 0.7.0.
-- The status line now counts sound dropouts, next to `fast` and the ms.
+- Mixer uses 128-frame blocks instead of 256 (2.7 ms at 48 kHz).
+- USB output starts on one burst; non-USB starts on one block; underrun growth and shrink-back keep total safety margin, with a reduced steady-state latency.
+- New SETTINGS menu: disable vertical/upright mode and lock landscape across app switches; waveform size and zoom; keep screen on; panel folding; audio output shortcut; headphones over 2 channels.
+- REC recording folder can be chosen with Android's folder picker and is remembered; reset to Music/FLX4 Pocket.

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.7.4
+
+Lower app-side audio latency and a persistent settings menu.
+
+### Changed
+
+- The mixer runs on 128-frame blocks instead of 256 (2.7 ms at 48 kHz, 2.9 ms
+  at 44.1 kHz per block).
+- USB output starts on one burst of buffer instead of two; non-USB outputs
+  start on one block instead of two. Underrun growth and shrink-back safeguards
+  stay, with the same total maximum buffered time.
+- `MAX_BUFFER_BLOCKS` is 12 on a 128-frame block, keeping the previous
+  worst-case capacity.
+
+### Added
+
+- **SETTINGS** menu, persisted:
+  - disable vertical/upright mode and lock landscape across app switches;
+  - waveform size and zoom;
+  - keep screen on;
+  - deck / mixer panel folding;
+  - audio output shortcut and headphones-over-2-channels;
+  - choose the recording folder for REC WAV files with Android's document
+    picker, persisted, or reset to `Music/FLX4 Pocket`.
+- Recording can write to any writable folder chosen through Android's SAF tree
+  picker, not only `Music/FLX4 Pocket`.
+
 ## 0.7.3
 
 Fixes for what a review of 0.7.1 and 0.7.2 found.

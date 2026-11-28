@@ -131,8 +131,8 @@ different key under the same application id.
   `fast`). These figures come from reading Android's source, not from a
   measurement on a Pixel 9a: if yours differ, they are what to report.
 - What remains is outside an app without native code: Android's fast mixer,
-  the USB link and the controller's converter (10 to 18 ms), the app's own two
-  bursts of buffer (it grows by a block after an underrun and gives it back
+  the USB link and the controller's converter (10 to 18 ms), the app's own one
+  burst of buffer plus one 2.7 ms block on USB (it grows by a block after an underrun and gives it back
   after 10 s without one, so it settles on the smallest the output takes
   without glitches, and a single stall does not cost the rest of the set),
   and a Java thread that

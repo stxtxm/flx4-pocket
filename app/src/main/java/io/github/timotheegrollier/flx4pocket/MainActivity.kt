@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
@@ -21,6 +22,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextUtils
@@ -40,6 +42,8 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
@@ -181,8 +185,9 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         volumeControlStream = AudioManager.STREAM_MUSIC
+        applyKeepScreenOn()
+        applyOrientationLock()
 
         engine = AudioEngine(this)
         engine.splitCue = preferences.getBoolean(PREF_SPLIT, false)
@@ -200,6 +205,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         setupPanels()
         findViewById<View>(R.id.btn_library).setOnClickListener { showLibrary(!libraryVisible) }
         findViewById<View>(R.id.btn_audio).setOnClickListener { showAudioSettings() }
+        findViewById<View>(R.id.btn_settings).setOnClickListener { showSettings() }
         recButton = findViewById(R.id.btn_rec)
         recButton.setOnClickListener { toggleRecording() }
         updates = UpdateUi(this, findViewById(R.id.btn_update), work) { busy }
@@ -223,6 +229,8 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     override fun onResume() {
         super.onResume()
+        applyOrientationLock()
+        applyKeepScreenOn()
         updates.onResume()
         // Back in the app: a track deleted from the phone meanwhile drops out of the list.
         if (hasMusic()) scanLibrary()
@@ -431,7 +439,22 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         applyOrientation()
     }
 
-    private val upright: Boolean get() = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    private val upright: Boolean get() =
+        !preferences.getBoolean(PREF_DISABLE_UPRIGHT, false) &&
+            resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
+    /** Persistent vertical-mode setting: when off, always stay in landscape, even coming back to the app. */
+    private fun applyOrientationLock() {
+        requestedOrientation = if (preferences.getBoolean(PREF_DISABLE_UPRIGHT, false))
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        else
+            ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+    }
+
+    private fun applyKeepScreenOn() {
+        if (preferences.getBoolean(PREF_KEEP_SCREEN_ON, true)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
 
     /** Held upright, the screen remembers its own panels and waveform height; landscape keeps the keys it always had. */
     private fun scoped(key: String) = if (upright) "$key.upright" else key
@@ -982,6 +1005,18 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_RECORDING_TREE) {
+            if (resultCode != RESULT_OK || data?.data == null) return
+            val tree = data.data!!
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    tree,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            preferences.edit().putString(PREF_RECORDING_TREE, tree.toString()).apply()
+            return
+        }
         val key = when (requestCode) {
             REQ_FOLDER -> PREF_FOLDERS
             REQ_FILES -> PREF_FILES
@@ -1447,11 +1482,40 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
 
     /** Where [newRecordingFile] puts them, as the Files app shows it. */
     private val recordings: String
-        get() = if (Build.VERSION.SDK_INT < 29) getExternalFilesDir(Environment.DIRECTORY_MUSIC)?.path ?: RECORDINGS else RECORDINGS
+        get() = preferences.getString(PREF_RECORDING_TREE, null)?.let(::recordingTreeLabel)
+            ?: if (Build.VERSION.SDK_INT < 29) getExternalFilesDir(Environment.DIRECTORY_MUSIC)?.path ?: RECORDINGS else RECORDINGS
 
-    /** A new WAV in the phone's Music folder: no permission needed from Android 10; before that, the app's own folder. */
+    private fun recordingTreeLabel(uriString: String): String = try {
+        DocumentsContract.getTreeDocumentId(Uri.parse(uriString))
+    } catch (_: Exception) {
+        uriString
+    }
+
+    /** Lets the user pick any writable folder through Android's document picker; persisted across launches. */
+    private fun chooseRecordingFolder() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        )
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQ_RECORDING_TREE)
+        } catch (e: Exception) {
+            toast("No folder picker available: ${e.message}")
+        }
+    }
+
+    /** A new WAV in the chosen recording folder; otherwise the default Music folder. */
     private fun newRecordingFile(part: Int): FileChannel {
         val name = recordingName + (if (part > 1) " part $part" else "") + ".wav"
+        val customTree = preferences.getString(PREF_RECORDING_TREE, null)?.let(Uri::parse)
+        if (customTree != null) {
+            val doc = DocumentsContract.createDocument(contentResolver, customTree, "audio/x-wav", name)
+                ?: throw IOException("Cannot create $name in ${recordingTreeLabel(customTree.toString())}")
+            val pfd = contentResolver.openFileDescriptor(doc, "rw") ?: throw IOException("Cannot open $name")
+            return ParcelFileDescriptor.AutoCloseOutputStream(pfd).channel
+        }
         if (Build.VERSION.SDK_INT < 29) {
             return RandomAccessFile(File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), name), "rw").channel
         }
@@ -1466,6 +1530,128 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     }
 
     private fun minutes(seconds: Long): String = String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60)
+
+    // ---------------------------------------------------------------------
+    // Settings
+    // ---------------------------------------------------------------------
+
+    /** One persistent settings menu for display, audio shortcuts and recording. */
+    private fun showSettings() {
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, pad)
+        }
+        fun section(title: String) {
+            content.addView(TextView(this).apply {
+                text = title
+                setTextColor(getColor(R.color.text))
+                textSize = 15f
+                setPadding(0, pad, 0, pad / 2)
+            })
+        }
+        fun check(label: String, key: String, default: Boolean, onChange: (Boolean) -> Unit = {}) {
+            content.addView(CheckBox(this).apply {
+                text = label
+                isChecked = preferences.getBoolean(key, default)
+                setOnCheckedChangeListener { _, checked ->
+                    preferences.edit().putBoolean(key, checked).apply()
+                    onChange(checked)
+                }
+            })
+        }
+        fun slider(label: String, key: String, default: Float, min: Float, max: Float, scopedKey: Boolean = false, onChange: (Float) -> Unit) {
+            val prefKey = if (scopedKey) scoped(key) else key
+            val value = preferences.getFloat(prefKey, default).coerceIn(min, max)
+            val title = TextView(this).apply {
+                text = "$label: ${"%.2f".format(value)}"
+                setTextColor(getColor(R.color.text_dim))
+                textSize = 13f
+            }
+            content.addView(title)
+            content.addView(SeekBar(this).apply {
+                this.max = 1000
+                progress = (((value - min) / (max - min)).coerceIn(0f, 1f) * 1000).roundToInt()
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                        val v = min + (max - min) * progress / 1000f
+                        title.text = "$label: ${"%.2f".format(v)}"
+                        preferences.edit().putFloat(prefKey, v).apply()
+                        onChange(v)
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar) {}
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        section("Affichage")
+        check("Désactiver le mode vertical / verrouiller paysage", PREF_DISABLE_UPRIGHT, false) {
+            applyOrientationLock()
+            applyOrientation()
+        }
+        check("Garder l'écran allumé", PREF_KEEP_SCREEN_ON, true) { applyKeepScreenOn() }
+        slider("Taille waveforms (part de l'écran)", PREF_WAVE_SHARE, waveShare, 0.15f, 0.85f, scopedKey = true) {
+            applyWaveShare(findViewById(R.id.waves), it)
+            layoutPanels()
+        }
+        slider("Zoom waveform (secondes visibles)", PREF_ZOOM, 8f, 2f, 32f) { seconds ->
+            waves.forEach { it.visibleSeconds = seconds.toDouble() }
+            waves.forEach { it.invalidate() }
+        }
+        val panelLabels = arrayOf("Deck A", "Mixer", "Deck B")
+        PANEL_PREFS.forEachIndexed { i, key ->
+            check(panelLabels[i], scoped(key), i != 1 || !upright) { show ->
+                foldable[i].visibility = if (show) View.VISIBLE else View.GONE
+                layoutPanels()
+            }
+        }
+
+        section("Audio")
+        content.addView(TextView(this).apply {
+            text = "Ouvrir les réglages audio, sortie, niveaux et headphones"
+            setTextColor(getColor(R.color.text_dim))
+            textSize = 13f
+        })
+        content.addView(TextView(this).apply {
+            text = "AUDIO…"
+            setTextColor(getColor(R.color.text))
+            setPadding(0, pad / 2, 0, pad / 2)
+            setOnClickListener { showAudioSettings() }
+        })
+        check("Headphones over 2 channels", PREF_SPLIT, false) { checked ->
+            engine.splitCue = checked
+        }
+
+        section("Enregistrement")
+        content.addView(TextView(this).apply {
+            text = "Dossier REC: ${recordings}"
+            setTextColor(getColor(R.color.text_dim))
+            textSize = 13f
+        })
+        content.addView(TextView(this).apply {
+            text = "Choisir le dossier d'enregistrement…"
+            setTextColor(getColor(R.color.text))
+            setPadding(0, pad / 2, 0, pad / 2)
+            setOnClickListener { chooseRecordingFolder() }
+        })
+        content.addView(TextView(this).apply {
+            text = "Réinitialiser au dossier par défaut"
+            setTextColor(getColor(R.color.text_dim))
+            setPadding(0, pad / 2, 0, pad / 2)
+            setOnClickListener {
+                preferences.edit().remove(PREF_RECORDING_TREE).apply()
+                toast("Dossier REC réinitialisé")
+            }
+        })
+
+        val scroll = ScrollView(this).apply { addView(content) }
+        AlertDialog.Builder(this)
+            .setTitle("Paramètres")
+            .setView(scroll)
+            .setPositiveButton("OK", null)
+            .show()
+    }
 
     // ---------------------------------------------------------------------
     // Audio settings
@@ -1532,6 +1718,7 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
     private companion object {
         const val REQ_FOLDER = 41
         const val REQ_FILES = 42
+        const val REQ_RECORDING_TREE = 43
         const val PREFS = "flx4-preferences"
         const val PREF_FOLDER = "folder" // up to 0.4: the one music folder
         const val PREF_FOLDERS = "folders"
@@ -1541,6 +1728,9 @@ class MainActivity : Activity(), Flx4Listener, DeckPanel.Host, Choreographer.Fra
         const val PREF_WAVE_SHARE = "wave_share"
         const val PREF_SPLIT = "phones_over_2" // not "split_cue": up to 0.6.0 that box did nothing on the FLX4 and may be left ticked
         const val PREF_ZOOM = "zoom"
+        const val PREF_DISABLE_UPRIGHT = "disable_upright"
+        const val PREF_KEEP_SCREEN_ON = "keep_screen_on"
+        const val PREF_RECORDING_TREE = "recording_tree"
         val PANEL_PREFS = arrayOf("panel_deck_a", "panel_mixer", "panel_deck_b")
 
         /** Two LOAD presses closer than this are a double press (instant doubles). */

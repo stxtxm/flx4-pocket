@@ -135,6 +135,12 @@
                     android:text="AUDIO" />
 
                 <TextView
+                    android:id="@+id/btn_settings"
+                    style="@style/Btn.Wrap"
+                    android:contentDescription="Settings"
+                    android:text="SETTINGS" />
+
+                <TextView
                     android:id="@+id/btn_update"
                     style="@style/Btn.Wrap" />
             </LinearLayout>

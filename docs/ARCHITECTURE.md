@@ -41,8 +41,8 @@ drive it with an in-memory source.
 ## Audio engine
 
 `AudioEngine` owns one `AudioTrack` and one high-priority thread that mixes
-256-frame blocks (5.8 ms at 44.1 kHz). Both decks render into the same block,
-so there is no second player clock to drift against.
+128-frame blocks (2.9 ms at 44.1 kHz, 2.7 ms at 48 kHz). Both decks render into
+the same block, so there is no second player clock to drift against.
 
 **Output rate.** Android gives a stream its low-latency ("fast") path only
 when it runs at the rate the output is mixed at; a 44.1 kHz stream on a
@@ -61,9 +61,9 @@ reports. A four-channel stream that misses the fast path where a stereo one
 gets it is on an output Android mixes in stereo, which drops channels 3-4
 anyway: the engine then plays stereo.
 
-**Buffer.** On USB the stream starts on two bursts of buffer (2 x 5 ms, AOSP's
-USB period, rounded to 16 frames), elsewhere on two blocks; it grows by one block after an
-underrun (up to six) and gives one back after 10 s without an underrun, while
+**Buffer.** On USB the stream starts on one burst of buffer (5 ms, AOSP's
+USB period, rounded to 16 frames), elsewhere on one block; it grows by one block after an
+underrun (up to twelve, the same total as before on a 256-frame block) and gives one back after 10 s without an underrun, while
 no deck plays and never below its starting size. A size
 that underruns again once reached that way is not tried again. Every 64
 blocks the engine sets the size again, since a track Android re-creates comes
